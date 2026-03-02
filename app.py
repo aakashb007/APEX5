@@ -2260,7 +2260,7 @@ def render_card(res, is_sniper=False):
 
 # ─── SIDEBAR NAV ─────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚡ APEX")
+    st.title("⚡ APEX 2.5")
     st.caption("Pump & Dump Intelligence")
     nav = st.radio("Navigation", ["🔥 Scanner","⚙️ Settings","📒 Journal"], label_visibility="collapsed")
     st.divider()
