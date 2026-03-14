@@ -2573,6 +2573,32 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
     if dual_confirmed:
         dual_html='<div class="dual-confirm">🔥 DUAL CONFIRMED — Scanner + Sentinel both flagged this coin — HIGH CONVICTION SIGNAL</div>'
 
+    # ── Catalyst cross-validation banner ─────────────────────────────────────
+    _cat_live = st.session_state.get('cat_results', [])
+    _sym_clean = res.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+    _cat_hit = next((c for c in _cat_live if c.get('symbol','').upper()==_sym_clean and not c.get('red_flag') and c.get('pump_probability') in ['High','Medium']), None)
+    catalyst_banner_html = ''
+    if _cat_hit:
+        _cp = _cat_hit.get('pump_probability','Medium')
+        _cs = _cat_hit.get('sentiment_score',0)
+        _cc = _cat_hit.get('primary_catalyst','')
+        _ct = _cat_hit.get('timeframe','')
+        _cbg = '#f0fdf4' if _cp=='High' else '#fffbeb'
+        _cbd = '#059669' if _cp=='High' else '#d97706'
+        _ctx = '#059669' if _cp=='High' else '#92400e'
+        catalyst_banner_html = (
+            '<div style="background:' + _cbg + ';border:1px solid ' + _cbd + ';border-radius:6px;'
+            'padding:8px 12px;margin:4px 0 6px 0;display:flex;align-items:center;justify-content:space-between;">'
+            '<div>'
+            '<div style="font-family:monospace;font-size:.6rem;font-weight:700;color:' + _ctx + ';margin-bottom:2px;">'
+            '🧠 NARRATIVE CONFIRMED — Catalyst Intelligence · ' + _cp + ' · ' + str(_cs) + '/100</div>'
+            '<div style="font-family:monospace;font-size:.58rem;color:' + _ctx + ';">' + _cc + ' · ' + _ct + '</div>'
+            '</div>'
+            '<span style="font-family:monospace;font-size:.58rem;padding:2px 7px;border-radius:3px;'
+            'background:white;color:' + _cbd + ';border:0.5px solid ' + _cbd + ';">' + _cp + '</span>'
+            '</div>'
+        )
+
     warnings_html=""
     if warnings_list:
         wi="".join([f'<div style="padding:3px 0;font-size:.68rem;">{w}</div>' for w in warnings_list])
@@ -2653,7 +2679,7 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
 
     # ALL reasons (no truncation on card)
     def _esc(s): return str(s).replace("{","{{").replace("}","}}")
-    reasons_html="".join([f"<div class='r'><span style='color:var(--muted);margin-right:6px;'>▸</span>{_esc(r)}</div>" for r in res['reasons']])
+    reasons_html="".join([f"<div class='r'><span style='color:var(--muted);margin-right:6px;'>▸</span>{_esc(r)}</div>" for r in res['reasons'] if r is not None and str(r).strip()])
 
     _price=float(res.get('price') or 0); _tp=float(res.get('tp') or 0); _sl=float(res.get('sl') or 0)
     _rsi=float(res.get('rsi') or 0)
@@ -2696,7 +2722,7 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
       R:R <span style="color:{rr_col};font-weight:600;">{rr_str}</span><br>RSI <span style="color:var(--text);">{_rsi:.1f}</span><br>{session}
     </div>
   </div>
-  {dual_html}{warnings_html}
+  {dual_html}{catalyst_banner_html}{warnings_html}
   <div class="sig-pips">
     <div class="pip-item">{pip(bd.get('ob_imbalance',0),4,14)} OB</div>
     <div class="pip-item">{pip(bd.get('funding',0)+bd.get('funding_hist',0),3,15)} FUNDING</div>
@@ -4003,16 +4029,27 @@ if nav=="🧠 Catalyst":
                             headlines.append({'title': f"{name} ({sym}) is trending on CoinGecko — rank score {score}", 'coins': [sym]})
                 except:
                     pass
-                try:
-                    news_url = "https://api.coingecko.com/api/v3/news"
-                    with urllib.request.urlopen(news_url, timeout=10) as r:
-                        news_data = _json.loads(r.read())
-                    for item in news_data.get('data', [])[:20]:
-                        title = item.get('title','')
-                        if title:
-                            headlines.append({'title': title, 'coins': []})
-                except:
-                    pass
+                # ── RSS feeds: CoinDesk + CoinTelegraph + Decrypt ─────
+                import xml.etree.ElementTree as _xml
+                _rss_feeds = [
+                    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+                    "https://cointelegraph.com/rss",
+                    "https://decrypt.co/feed",
+                ]
+                _rss_headers = {"User-Agent": "Mozilla/5.0"}
+                import requests as _req
+                for _feed_url in _rss_feeds:
+                    try:
+                        _fr = _req.get(_feed_url, timeout=8, headers=_rss_headers)
+                        if _fr.status_code == 200:
+                            _root = _xml.fromstring(_fr.content)
+                            for _item in _root.findall('.//item')[:8]:
+                                _t = _item.find('title')
+                                _title = _t.text.strip() if _t is not None and _t.text else ''
+                                if _title:
+                                    headlines.append({'title': _title, 'coins': []})
+                    except:
+                        pass
                 if not headlines:
                     headlines = [{'title': 'No news fetched — using APEX signal coins for analysis', 'coins': []}]
 
@@ -4061,24 +4098,24 @@ apex_match should be true if the coin symbol appears in: {apex_text}
 red_flag should be true only for clear shill/spam/pump-and-dump patterns"""
 
                 # ── Call Groq API ─────────────────────────────────────
-                import urllib.request, urllib.error
-                groq_payload = _json.dumps({
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1500,
-                    "temperature": 0.3
-                }).encode('utf-8')
-
-                groq_req = urllib.request.Request(
+                import requests as _requests
+                groq_resp = _requests.post(
                     "https://api.groq.com/openai/v1/chat/completions",
-                    data=groq_payload,
                     headers={
                         "Authorization": f"Bearer {groq_key}",
-                        "Content-Type": "application/json"
-                    }
+                        "Content-Type": "application/json",
+                        "User-Agent": "Mozilla/5.0"
+                    },
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 1500,
+                        "temperature": 0.3
+                    },
+                    timeout=30
                 )
-                with urllib.request.urlopen(groq_req, timeout=30) as r:
-                    groq_data = _json.loads(r.read())
+                groq_resp.raise_for_status()
+                groq_data = groq_resp.json()
 
                 raw_content = groq_data['choices'][0]['message']['content'].strip()
                 raw_content = raw_content.replace('```json','').replace('```','').strip()
@@ -4122,36 +4159,46 @@ red_flag should be true only for clear shill/spam/pump-and-dump patterns"""
             prob = coin.get('pump_probability','Low')
             bg, border, text = prob_colors.get(prob, prob_colors['Low'])
             score = int(coin.get('sentiment_score', 0))
-            bar_w = score
+            bar_w = min(score, 100)
             apex_match = coin.get('apex_match', False)
             red_flag = coin.get('red_flag', False)
             sym = coin.get('symbol','–')
             catalyst = coin.get('primary_catalyst','–')
             timeframe = coin.get('timeframe','–')
             red_reason = coin.get('red_flag_reason','')
-
-            apex_badge = f'<span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;background:#f0fdf4;color:#059669;border:0.5px solid #059669;">APEX match active</span>' if apex_match else '<span style="font-family:monospace;font-size:11px;color:#94a3b8;">No active APEX signal</span>'
-            flag_badge = f'<span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;background:#fef2f2;color:#dc2626;border:0.5px solid #dc2626;">{red_reason}</span>' if red_flag else ''
-
+            apex_badge = (
+                '<span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;'
+                'background:#f0fdf4;color:#059669;border:0.5px solid #059669;">✅ APEX match active</span>'
+                if apex_match else
+                '<span style="font-family:monospace;font-size:11px;color:#94a3b8;">No active APEX signal</span>'
+            )
+            flag_badge = (
+                '<span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;'
+                'background:#fef2f2;color:#dc2626;border:0.5px solid #dc2626;">⚠ ' + red_reason + '</span>'
+                if red_flag else ''
+            )
+            _cat_html = (
+                '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:14px 16px;margin-bottom:10px;">'
+                '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">'
+                '<div style="display:flex;align-items:center;gap:8px;">'
+                '<span style="font-family:monospace;font-size:14px;font-weight:700;color:' + text + ';">' + sym + '</span>'
+                '<span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;background:' + bg + ';color:' + text + ';border:1px solid ' + border + ';">' + prob + '</span>'
+                '</div>'
+                '<span style="font-family:monospace;font-size:14px;font-weight:700;color:' + text + ';">' + str(score) + '/100</span>'
+                '</div>'
+                '<div style="height:4px;background:#e2e8f0;border-radius:2px;margin-bottom:10px;">'
+                '<div style="height:4px;width:' + str(bar_w) + '%;background:' + border + ';border-radius:2px;"></div>'
+                '</div>'
+                '<div style="font-family:monospace;font-size:12px;color:#475569;margin-bottom:8px;">' + catalyst + '</div>'
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'
+                '<span style="font-family:monospace;font-size:11px;padding:2px 7px;border-radius:4px;background:#eff6ff;color:#0284c7;border:0.5px solid #bfdbfe;">' + timeframe + '</span>'
+                + flag_badge +
+                '</div>'
+                '<div style="border-top:1px solid #e2e8f0;padding-top:8px;">' + apex_badge + '</div>'
+                '</div>'
+            )
             with card_cols[i % 2]:
-                st.markdown(f'''<div style="background:{bg};border:0.5px solid {border};border-radius:10px;padding:14px 16px;margin-bottom:10px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                  <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-family:monospace;font-size:14px;font-weight:700;color:{text};">{sym}</span>
-                    <span style="font-family:monospace;font-size:11px;padding:2px 8px;border-radius:4px;background:{bg};color:{text};border:0.5px solid {border};">{prob}</span>
-                  </div>
-                  <span style="font-family:monospace;font-size:14px;font-weight:700;color:{text};">{score}/100</span>
-                </div>
-                <div style="height:4px;background:#e2e8f0;border-radius:2px;margin-bottom:10px;">
-                  <div style="height:4px;width:{bar_w}%;background:{border};border-radius:2px;"></div>
-                </div>
-                <div style="font-family:monospace;font-size:12px;color:#475569;margin-bottom:8px;">{catalyst}</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-                  <span style="font-family:monospace;font-size:11px;padding:2px 7px;border-radius:4px;background:#eff6ff;color:#0284c7;border:0.5px solid #bfdbfe;">{timeframe}</span>
-                  {flag_badge}
-                </div>
-                <div style="border-top:0.5px solid #e2e8f0;padding-top:8px;">{apex_badge}</div>
-                </div>''', unsafe_allow_html=True)
+                st.markdown(_cat_html, unsafe_allow_html=True)
 
         # ── Cross-validation on APEX results ──────────────────────────
         st.markdown("---")
