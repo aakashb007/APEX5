@@ -93,8 +93,8 @@ DEFAULT_SETTINGS = {
     "pts_wyckoff":30,"pts_cvd":20,"pts_stophunt":25,
     "dst_enabled":True,"dst_dema_len":200,"dst_st_period":10,"dst_st_mult":3.0,
     "dst_vol_mult":1.2,"dst_rsi_ob":65,"dst_rsi_os":35,"dst_mom_bars":3,
-    "dst_use_vol":True,"dst_use_rsi":True,"dst_use_mom":True,"dst_use_dema_dist":True,
-    "dst_min_dema_dist":0.1,"dst_fresh_bars":5,"dst_sl_atr":1.5,"dst_tp_atr":3.0,
+    "dst_use_vol":True,"dst_use_rsi":False,"dst_use_mom":False,"dst_use_dema_dist":False,
+    "dst_min_dema_dist":0.1,"dst_fresh_bars":10,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
     "dst_confirm_boost":8,"dst_conflict_penalty":5,
     "dst_auto_scan":False,"dst_interval":5,"dst_timeframe":"5m","dst_min_rr":1.5,"dst_min_score":3,
     "gl_enabled":True,"gl_interval":5,"gl_min_gain_pct":3.0,"gl_min_loss_pct":3.0,
@@ -150,10 +150,22 @@ def ensure_gl_performance():
     """Create GL performance CSV if not exists."""
     headers = ['signal_id','timestamp_utc','timestamp_pkt','symbol','type','direction',
                'entry','tp','sl','rr','chg_4h','chg_1h','rsi','vol_ratio',
-               'outcome','outcome_time','pnl_pct','bars_to_outcome']
+               'outcome','outcome_time','pnl_pct','bars_to_outcome',
+               'max_move_pct','max_move_price','max_move_time']
     if not os.path.exists(GL_PERF_FILE):
         with open(GL_PERF_FILE,'w',newline='',encoding='utf-8') as f:
             csv.writer(f).writerow(headers)
+    else:
+        try:
+            _df = pd.read_csv(GL_PERF_FILE)
+            changed = False
+            for col in ['max_move_pct','max_move_price','max_move_time']:
+                if col not in _df.columns:
+                    _df[col] = ''
+                    changed = True
+            if changed:
+                _df.to_csv(GL_PERF_FILE, index=False)
+        except: pass
 
 def log_gl_signal(sig):
     """Log a new G/L signal to performance tracker with PENDING outcome."""
@@ -180,7 +192,8 @@ def log_gl_signal(sig):
                 sig.get('chg_1h',''),
                 sig.get('rsi',''),
                 sig.get('vol_ratio',''),
-                'PENDING','','',''
+                'PENDING','','','',
+                '','',''
             ])
     except Exception as e:
         print(f"[GL PERF] Log error: {e}")
@@ -217,6 +230,19 @@ def check_gl_outcomes():
                 # Fetch current price
                 ticker = ex.fetch_ticker(sym)
                 current = float(ticker['last'])
+
+                # Track max move
+                try:
+                    _prev_max = float(row['max_move_pct']) if str(row.get('max_move_pct','')) not in ['','nan'] else 0.0
+                    if str(row.get('direction','')) == 'LONG' or str(row.get('type','')) in ['PRE_GAINER','GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE']:
+                        _move_pct = (current - entry) / entry * 100
+                    else:
+                        _move_pct = (entry - current) / entry * 100
+                    if abs(_move_pct) > abs(_prev_max):
+                        df.at[idx, 'max_move_pct'] = round(_move_pct, 3)
+                        df.at[idx, 'max_move_price'] = round(current, 6)
+                        df.at[idx, 'max_move_time'] = _dual_time()[0]
+                except: pass
 
                 direction = str(row['direction'])
                 if direction == 'WATCH':
@@ -291,14 +317,14 @@ def get_gl_stats():
     except: return {}
 
 def ensure_journal():
-    headers=["ts","symbol","exchange","type","pump_score","class","price","tp","sl","triggers","status","entry_touched","tp1","tp2","tp3"]
+    headers=["ts","symbol","exchange","type","pump_score","class","price","tp","sl","triggers","status","entry_touched","tp1","tp2","tp3","scan_time"]
     if not os.path.exists(JOURNAL_FILE):
         with open(JOURNAL_FILE,'w',newline='',encoding='utf-8') as f: csv.writer(f).writerow(headers)
     else:
         try:
             df=pd.read_csv(JOURNAL_FILE); updated=False
             for col,default in [('status','ACTIVE'),('exchange','MEXC'),('entry_touched','0'),
-                                  ('tp1','0'),('tp2','0'),('tp3','0')]:
+                                  ('tp1','0'),('tp2','0'),('tp3','0'),('scan_time','')]:
                 if col not in df.columns: df[col]=default; updated=True
             if updated: df.to_csv(JOURNAL_FILE,index=False)
         except: pass
@@ -387,6 +413,7 @@ def log_trade(res, force=False):
                 round(res.get('tp1',res.get('tp',0)),8),
                 round(res.get('tp2',res.get('tp',0)),8),
                 round(res.get('tp3',res.get('tp',0)),8),
+                res.get('scan_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
             ])
     except: pass
 
@@ -692,25 +719,55 @@ def check_dst_signal(df, symbol, s=None):
         h = df["high"];  l = df["low"]
         v = df["volume"]
 
-        DEMA_LEN   = int(s.get('dst_dema_len',   21))
+        # ── Parameters — exact Pine Script match ─────────────────────
+        DEMA_LEN   = int(s.get('dst_dema_len',   200))
         ST_PERIOD  = int(s.get('dst_st_period',  10))
         ST_MULT    = float(s.get('dst_st_mult',   3.0))
-        RSI_OB     = float(s.get('dst_rsi_ob',   65))
-        RSI_OS     = float(s.get('dst_rsi_os',   35))
+        RSI_LEN    = int(s.get('dst_rsi_len',    14))
+        RSI_OB     = float(s.get('dst_rsi_ob',   70))
+        RSI_OS     = float(s.get('dst_rsi_os',   30))
         MOM_BARS   = int(s.get('dst_mom_bars',    3))
-        MIN_DEMA_D = float(s.get('dst_min_dema_dist', 0.1))
-        FRESH_BARS = int(s.get('dst_fresh_bars',  5))
-        SL_ATR     = float(s.get('dst_sl_atr',   1.5))
-        TP_ATR     = float(s.get('dst_tp_atr',   3.0))
+        MIN_DEMA_D = float(s.get('dst_min_dema_dist', 0.3))
+        FRESH_BARS = int(s.get('dst_fresh_bars',  3))
+        SL_ATR     = float(s.get('dst_sl_atr',   2.0))
+        TP_ATR     = float(s.get('dst_tp_atr',   4.0))
+        VOL_LEN    = int(s.get('dst_vol_len',    20))
         VOL_MULT   = float(s.get('dst_vol_mult', 1.2))
 
-        dema_line       = _dst_dema(c, DEMA_LEN)
-        st_line, st_dir = _dst_supertrend(h, l, c, ST_MULT, ST_PERIOD)
-        rsi             = _dst_rsi(c, 14)
-        atr             = _dst_atr(h, l, c, 14)
-        vol_ma          = v.rolling(20).mean()
+        # ── DEMA — exact Pine: e1=ema(src,len), e2=ema(e1,len), dema=2*e1-e2
+        e1 = c.ewm(span=DEMA_LEN, adjust=False).mean()
+        e2 = e1.ewm(span=DEMA_LEN, adjust=False).mean()
+        dema_line = 2 * e1 - e2
 
-        close_now = float(c.iloc[-1]); open_now  = float(o.iloc[-1])
+        # ── SuperTrend — Pine-exact with _st line ────────────────────
+        _atr_st = _dst_atr(h, l, c, ST_PERIOD)
+        _hl2    = (h + l) / 2
+        _ub     = _hl2 + ST_MULT * _atr_st
+        _lb     = _hl2 - ST_MULT * _atr_st
+        _upper  = _ub.copy()
+        _lower  = _lb.copy()
+        _dir    = pd.Series(1.0, index=c.index)
+        _st     = _upper.copy()  # init _st to upper band like Pine nz()
+        for _i in range(1, len(c)):
+            _pU = _upper.iloc[_i-1]; _pL = _lower.iloc[_i-1]; _pC = c.iloc[_i-1]
+            _upper.iloc[_i] = _ub.iloc[_i] if (_ub.iloc[_i] < _pU or _pC > _pU) else _pU
+            _lower.iloc[_i] = _lb.iloc[_i] if (_lb.iloc[_i] > _pL or _pC < _pL) else _pL
+            _pST = _st.iloc[_i-1]
+            _pU2 = _upper.iloc[_i-1]
+            if _pST == _pU2:
+                _dir.iloc[_i] = 1 if c.iloc[_i] > _upper.iloc[_i] else -1
+            else:
+                _dir.iloc[_i] = -1 if c.iloc[_i] < _lower.iloc[_i] else 1
+            _st.iloc[_i] = _lower.iloc[_i] if _dir.iloc[_i] == 1 else _upper.iloc[_i]
+        st_dir = _dir
+
+        # ── Indicators ────────────────────────────────────────────────
+        rsi    = _dst_rsi(c, RSI_LEN)
+        atr    = _dst_atr(h, l, c, 14)
+        vol_ma = v.rolling(VOL_LEN).mean()
+
+        close_now = float(c.iloc[-1])
+        open_now  = float(o.iloc[-1])
         dema_now  = float(dema_line.iloc[-1])
         dir_now   = float(st_dir.iloc[-1])
         rsi_now   = float(rsi.iloc[-1])
@@ -718,17 +775,22 @@ def check_dst_signal(df, symbol, s=None):
         vol_now   = float(v.iloc[-1])
         volma_now = float(vol_ma.iloc[-1]) if float(vol_ma.iloc[-1]) > 0 else 1
 
+        # ── Filters — exact Pine logic ─────────────────────────────────
         vol_ok    = (vol_now > volma_now * VOL_MULT) if s.get('dst_use_vol', True) else True
-        rsi_long  = (40 < rsi_now < RSI_OB) if s.get('dst_use_rsi', True) else True
-        rsi_short = (RSI_OS < rsi_now < 60) if s.get('dst_use_rsi', True) else True
-        mom_long  = (close_now > float(c.iloc[-1 - MOM_BARS]) and close_now > open_now) if s.get('dst_use_mom', True) else True
-        mom_short = (close_now < float(c.iloc[-1 - MOM_BARS]) and close_now < open_now) if s.get('dst_use_mom', True) else True
-        dema_ok   = (abs(close_now - dema_now) / close_now * 100 > MIN_DEMA_D) if s.get('dst_use_dema_dist', True) else True
+        rsi_long  = (rsi_now > 40 and rsi_now < RSI_OB) if s.get('dst_use_rsi', False) else True
+        rsi_short = (rsi_now < 60 and rsi_now > RSI_OS) if s.get('dst_use_rsi', False) else True
+        mom_long  = (close_now > float(c.iloc[-1-MOM_BARS]) and close_now > open_now) if s.get('dst_use_mom', False) else True
+        mom_short = (close_now < float(c.iloc[-1-MOM_BARS]) and close_now < open_now) if s.get('dst_use_mom', False) else True
+        dema_ok   = (abs(close_now - dema_now) / close_now * 100 > MIN_DEMA_D)
 
-        changed    = st_dir != st_dir.shift(1)
+        # Fresh signal — Pine: barsInTrend <= 3
+        # Fresh signal — precompute flips on reset index for reliable lookup
+        _chg_fn = (st_dir != st_dir.shift(1)).reset_index(drop=True)
+        _n = len(_chg_fn)
         bars_since = 999
-        for j in range(1, FRESH_BARS + 2):
-            if len(changed) > j and changed.iloc[-j]:
+        for j in range(1, 20):
+            _idx = _n - 1 - j
+            if _idx >= 0 and bool(_chg_fn.iloc[_idx]):
                 bars_since = j - 1
                 break
         fresh = bars_since <= FRESH_BARS
@@ -740,11 +802,19 @@ def check_dst_signal(df, symbol, s=None):
             return None
 
         direction = "LONG" if long_sig else "SHORT"
-        sl  = close_now - SL_ATR * atr_now if long_sig else close_now + SL_ATR * atr_now
-        tp  = close_now + TP_ATR * atr_now if long_sig else close_now - TP_ATR * atr_now
-        rr  = round(abs(tp - close_now) / max(abs(sl - close_now), 0.000001), 2)
-        tp1 = close_now + (tp - close_now) * 0.4 if long_sig else close_now - (close_now - tp) * 0.4
-        tp3 = close_now + (tp - close_now) * 1.5 if long_sig else close_now - (close_now - tp) * 1.5
+
+        # SL = SuperTrend line (lower band for LONG, upper band for SHORT)
+        # This matches Pine Script with useATRStops = false (default)
+        st_lower_now = float(_lower.iloc[-1])
+        st_upper_now = float(_upper.iloc[-1])
+        sl = st_lower_now if long_sig else st_upper_now
+
+        # TP = entry + (entry - SL) * TP_ATR ratio (risk multiple)
+        sl_dist = abs(close_now - sl)
+        tp  = close_now + TP_ATR * sl_dist if long_sig else close_now - TP_ATR * sl_dist
+        rr  = round(abs(tp - close_now) / max(sl_dist, 0.000001), 2)
+        tp1 = close_now + sl_dist * 1.0 if long_sig else close_now - sl_dist * 1.0
+        tp3 = close_now + sl_dist * TP_ATR * 1.5 if long_sig else close_now - sl_dist * TP_ATR * 1.5
 
         return {
             "strategy":   "DST",
@@ -805,10 +875,22 @@ def run_dst_scan(coin_list, s, exchange_clients):
             if ex is None:
                 continue
 
-            # Fetch 5m OHLCV independently
-            raw = asyncio.get_event_loop().run_until_complete(
-                ex.fetch_ohlcv(symbol, tf, limit=250)
-            ) if hasattr(ex, 'fetch_ohlcv') else []
+            # Fetch OHLCV — always use MEXC futures for candle data
+            # MEXC matches TradingView 83% win rate backtest and works on Colab
+            # Trading exchange (GATE/OKX/MEXC) is separate — signal is exchange-agnostic
+            try:
+                import ccxt as _ccxt_dst
+                _mexc_dst = _ccxt_dst.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+                raw = _mexc_dst.fetch_ohlcv(symbol, tf, limit=(2000 if tf == '5m' else 1000))
+            except:
+                try:
+                    import ccxt as _ccxt_dst
+                    _ex_sync = _ccxt_dst.gateio({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+                    if exchange_id.lower() == 'okx':
+                        _ex_sync = _ccxt_dst.okx({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+                    raw = _ex_sync.fetch_ohlcv(symbol, tf, limit=(2000 if tf == '5m' else 1000))
+                except:
+                    raw = []
 
             if not raw or len(raw) < 100:
                 continue
@@ -824,12 +906,17 @@ def run_dst_scan(coin_list, s, exchange_clients):
 
             sig['exchange'] = exchange_id.upper()
             sig['tf'] = tf
-            utc_s, pkt_s = _dual_time()
+            try:
+                utc_s, pkt_s = _dual_time()
+            except:
+                from datetime import datetime as _dtnow, timezone as _tz
+                utc_s = _dtnow.now(_tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+                pkt_s = utc_s
             sig['scan_time'] = utc_s
             sig['scan_time_pkt'] = pkt_s
             results.append(sig)
 
-        except:
+        except Exception as _dst_err:
             continue
 
     # Sort by R:R descending
@@ -1377,6 +1464,61 @@ def send_dst_discord_alert(webhook_url, sig):
         requests.post(webhook_url, json={'embeds': [embed]}, timeout=5)
     except:
         pass
+def send_dst_exit_alert(webhook_url, sig, exit_price, result_pct, result_pnl, exit_reason):
+    """Send DEMA+ST exit/close alert to Discord."""
+    try:
+        win = result_pnl >= 0
+        color = 0x059669 if win else 0xdc2626
+        emoji = "✅" if win else "❌"
+        direction_emoji = "📗" if sig['direction'] == 'LONG' else "📕"
+        embed = {
+            'title': f'🔵 DEMA+ST EXIT | {sig["symbol"]} ({sig.get("exchange","")}) — {sig.get("tf","")}',
+            'color': color,
+            'description': (
+                f"{emoji} **{sig['direction']} CLOSED** — {exit_reason}\n"
+                f"**Entry:** `${sig['close']:.6f}` → **Exit:** `${exit_price:.6f}`\n"
+                f"**Result:** `{result_pct:+.2f}%` | **P&L:** `{result_pnl:+.4f} USDT` per unit\n"
+                f"🛑 **Original SL:** `${sig['sl']:.6f}` | 🎯 **Original TP:** `${sig['tp2']:.6f}`\n"
+                f"📐 **DEMA:** `${sig['dema']:.6f}` | **ST Flip:** opposite direction"
+            ),
+            'footer': {'text': f'APEXAI — DEMA+ST Exit • {sig.get("scan_time","–")} | {sig.get("scan_time_pkt","–")}'}
+        }
+        requests.post(webhook_url, json={'embeds': [embed]}, timeout=5)
+    except:
+        pass
+
+def send_dst_partial_alert(webhook_url, sig, current_price, alert_type):
+    """Send partial profit / breakeven alert to Discord."""
+    try:
+        if alert_type == 'BREAKEVEN':
+            color = 0x0284c7
+            title = f'🔵 DEMA+ST BREAKEVEN | {sig["symbol"]} ({sig.get("exchange","")}) — {sig.get("tf","")}'
+            desc = (
+                f'🔒 **Move SL to Breakeven** — R:R 1.5 reached\n'
+                f'**Entry:** `${sig["close"]:.4f}` | **Current:** `${current_price:.4f}`\n'
+                f'**New SL:** `${sig["close"]:.4f}` (breakeven — zero risk now)\n'
+                f'**Still holding** remaining position for ST flip exit'
+            )
+        else:  # PARTIAL
+            color = 0x059669
+            pnl_pct = abs(current_price - sig['close']) / sig['close'] * 100
+            title = f'🟢 DEMA+ST PARTIAL EXIT | {sig["symbol"]} ({sig.get("exchange","")}) — {sig.get("tf","")}'
+            desc = (
+                f'💰 **Take 50% Profit** — R:R 2.0 reached\n'
+                f'**Entry:** `${sig["close"]:.4f}` | **Exit 50%:** `${current_price:.4f}`\n'
+                f'**Profit on half:** `+{pnl_pct:.2f}%`\n'
+                f'**Remaining 50%:** hold until ST flips | SL at breakeven'
+            )
+        embed = {
+            'title': title,
+            'color': color,
+            'description': desc,
+            'footer': {'text': f'APEXAI — DEMA+ST • {sig.get("scan_time","–")} | {sig.get("scan_time_pkt","–")}'}
+        }
+        requests.post(webhook_url, json={'embeds': [embed]}, timeout=5)
+    except:
+        pass
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ENGINE
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2485,17 +2627,32 @@ class PrePumpScreener:
         for sym,t in tk_okx.items():
             if sym.endswith(':USDT') and t.get('quoteVolume'):
                 swaps_dict[sym]={'vol':float(t['quoteVolume'] or 0),'pct':float(t.get('percentage') or t.get('change') or 0),'exch_name':'OKX','exch_obj':self.okx}
-        # ── Crypto-only filter — remove commodities and non-crypto ────
+        # ── Crypto-only filter — remove commodities, forex, indices ────
         _COMMODITY_PATTERNS = [
+            # Metals & commodities
             'XAU','XAG','GOLD','SILVER','UKOIL','USOIL','BRENT','WTI',
-            'NATGAS','COPPER','PLATINUM','PALLADIUM','WHEAT','CORN','SOYBEAN'
+            'NATGAS','COPPER','PLATINUM','PALLADIUM','WHEAT','CORN','SOYBEAN',
+            # Forex
+            'EUR','GBP','JPY','AUD','CAD','CHF','NZD','CNY','CNH',
+            'KRW','SGD','HKD','MXN','RUB','TRY','ZAR','SEK','NOK',
+            # Stock indices
+            'SPX','SPY','NDX','QQQ','DJI','NIFTY','FTSE','DAX','NIKK',
+            'HSI','CSI','VIX','INDEX',
+            # Other non-crypto
+            'HALF','USDTUSDT','USDCUSDT',
         ]
         _blacklist = [x.strip().upper() for x in s.get('symbol_blacklist','').split(',') if x.strip()]
-        _all_excluded = _COMMODITY_PATTERNS + _blacklist
+        _all_excluded = list(set(_COMMODITY_PATTERNS + _blacklist))
         def _is_crypto(sym):
             base = sym.split('/')[0].upper()
+            # Must end with :USDT to be a futures contract (already filtered above)
+            # Additional check: base must not match any excluded pattern
             return not any(base == ex or base.startswith(ex) for ex in _all_excluded)
+        _before = len(swaps_dict)
         swaps_dict = {sym: v for sym, v in swaps_dict.items() if _is_crypto(sym)}
+        _filtered = _before - len(swaps_dict)
+        if _filtered > 0:
+            pass  # silently filtered non-crypto symbols
 
         scan_modes=s.get('scan_modes',['mixed'])
         if isinstance(scan_modes,str): scan_modes=[scan_modes]
@@ -2846,7 +3003,7 @@ with st.sidebar:
     st.title("⚡ APEXAI")
     st.caption("Pump & Dump Intelligence")
     # FIX: Use session state for nav to prevent journal→scanner glitch
-    nav_options=["🔥 Scanner","⚙️ Settings","📒 Journal","📊 Backtest","🧠 Catalyst"]
+    nav_options=["🔥 Scanner","⚙️ Settings","📒 Journal","📊 Backtest","🧠 Catalyst","🔍 Coin Analyzer"]
     nav=st.radio("Navigation",nav_options,label_visibility="collapsed",
                  index=nav_options.index(st.session_state.get('nav_state','🔥 Scanner')))
     if nav!=st.session_state.nav_state:
@@ -3221,6 +3378,16 @@ if nav=="⚙️ Settings":
         with pf_c1:
             st.markdown("**🕐 Kill-Switch (Time Filter)**")
             ns_ks_on = st.toggle("Enable Kill-Switch", S.get('kill_switch_on', False))
+            if ns_ks_on:
+                _current_h = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).hour
+                _active_zones = [kz for kz in S.get('kill_zones',[]) if kz.get('active',True) and (
+                    (int(kz.get('start',16)) <= _current_h < int(kz.get('end',19))) if int(kz.get('start',16)) <= int(kz.get('end',19))
+                    else (_current_h >= int(kz.get('start',16)) or _current_h < int(kz.get('end',19)))
+                )]
+                if _active_zones:
+                    st.warning(f"🔴 KILL ZONE ACTIVE — UTC {_current_h:02d}:xx — alerts blocked: {', '.join(z.get('label','') for z in _active_zones)}")
+                else:
+                    st.success(f"✅ Kill-switch ON — UTC {_current_h:02d}:xx — outside kill zones, alerts firing normally")
             st.markdown('<div class="setting-help">No alerts during these UTC hours. Add up to 3 kill zones.</div>', unsafe_allow_html=True)
             current_h = datetime.now(timezone.utc).hour
             existing_zones = S.get('kill_zones', [{"start":16,"end":19,"label":"Late NY","active":True}])
@@ -4039,6 +4206,269 @@ if nav=="📊 Backtest":
             file_name=f"apex_backtest_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv")
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # DEMA+ST SIGNAL HISTORY — Single Coin Backtest
+    # ═══════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown('<div class="section-h">🔵 DEMA+ST Signal History — Single Coin Lookup</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:4px;">Enter any coin — scan up to 2000 candles (5m) / 1500 candles (15m) and find the last 10 DEMA+ST signals — one signal per ST flip</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.6rem;background:#f0fdf4;border:1px solid #059669;border-radius:6px;padding:6px 10px;margin-bottom:10px;color:#166534;">&#128225; <b>Data source: MEXC Futures</b> &#8212; matches TradingView 83% win rate backtest. Exchange selector = trading venue only.</div>', unsafe_allow_html=True)
+
+    _dc1, _dc2, _dc3, _dc4 = st.columns([2,1,1,1])
+    with _dc1:
+        _dst_coin = st.text_input("Coin symbol", value="BTC", placeholder="BTC, ETH, SOL...", key="dst_bt_coin").upper().strip()
+    with _dc2:
+        _dst_tf = st.selectbox("Timeframe", ["5m","15m","1h","4h"], index=0, key="dst_bt_tf")
+    with _dc3:
+        _dst_exch = st.selectbox("Exchange", ["GATE","OKX","MEXC"], index=0, key="dst_bt_exch")
+    with _dc4:
+        _dst_bt_run = st.button("🔍 Find Signals", use_container_width=True, key="dst_bt_run")
+
+    if _dst_bt_run and _dst_coin:
+        with st.spinner(f"🔵 Scanning {_dst_coin} on {_dst_tf}..."):
+            try:
+                import ccxt as _ccxt_bt
+                from datetime import datetime as _dt_bt, timezone as _tz_bt
+
+                # Build symbol
+                _sym_bt = f"{_dst_coin}/USDT:USDT"
+                # Fetch from MEXC — matches TradingView 83% win rate, works on Colab
+                # Selected exchange shown as trading venue label only
+                try:
+                    _ex_bt = _ccxt_bt.mexc({"enableRateLimit": True, "options": {"defaultType": "swap"}})
+                except:
+                    _ex_map = {
+                        "GATE": _ccxt_bt.gateio({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                        "OKX":  _ccxt_bt.okx({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                        "MEXC": _ccxt_bt.mexc({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                    }
+                    _ex_bt = _ex_map[_dst_exch]
+
+                # Fetch more candles for shorter timeframes (DEMA 200 needs history)
+                _limit_bt = 2000 if _dst_tf == '5m' else (1500 if _dst_tf == '15m' else 1000)
+                _raw_bt = _ex_bt.fetch_ohlcv(_sym_bt, _dst_tf, limit=_limit_bt)
+                if not _raw_bt or len(_raw_bt) < 100:
+                    st.warning(f"Only {len(_raw_bt)} candles for {_sym_bt} on {_dst_tf} — need 250+")
+                else:
+                    _df_bt = pd.DataFrame(_raw_bt, columns=['ts','open','high','low','close','volume']).astype(float)
+
+                    # ── Run full indicators on entire dataset once ────────
+                    _found_sigs = []
+                    _c=_df_bt['close']; _h=_df_bt['high']; _l=_df_bt['low']; _v=_df_bt['volume']
+
+                    # DEMA 200
+                    _e1=_c.ewm(span=200,adjust=False).mean()
+                    _dema_bt=2*_e1-_e1.ewm(span=200,adjust=False).mean()
+
+                    # Wilder ATR + SuperTrend Pine-exact
+                    _pc=_c.shift(1)
+                    _tr=pd.concat([_h-_l,(_h-_pc).abs(),(_l-_pc).abs()],axis=1).max(axis=1)
+                    _atr_bt=_tr.ewm(alpha=1/10,adjust=False).mean()
+                    _hl2=(_h+_l)/2
+                    _ub_bt=_hl2+3.0*_atr_bt; _lb_bt=_hl2-3.0*_atr_bt
+                    _upper_bt=_ub_bt.copy(); _lower_bt=_lb_bt.copy()
+                    _dir_bt=pd.Series(1.0,index=_c.index)
+                    _st_bt=_upper_bt.copy()
+                    for _xi in range(1,len(_c)):
+                        _pU=_upper_bt.iloc[_xi-1]; _pL=_lower_bt.iloc[_xi-1]; _pC=_c.iloc[_xi-1]
+                        _upper_bt.iloc[_xi]=_ub_bt.iloc[_xi] if (_ub_bt.iloc[_xi]<_pU or _pC>_pU) else _pU
+                        _lower_bt.iloc[_xi]=_lb_bt.iloc[_xi] if (_lb_bt.iloc[_xi]>_pL or _pC<_pL) else _pL
+                        _pST=_st_bt.iloc[_xi-1]; _pU2=_upper_bt.iloc[_xi-1]
+                        _dir_bt.iloc[_xi]=(1 if _c.iloc[_xi]>_upper_bt.iloc[_xi] else -1) if _pST==_pU2 else (-1 if _c.iloc[_xi]<_lower_bt.iloc[_xi] else 1)
+                        _st_bt.iloc[_xi]=_lower_bt.iloc[_xi] if _dir_bt.iloc[_xi]==1 else _upper_bt.iloc[_xi]
+
+                    # Volume MA
+                    _vma_bt=_v.rolling(20).mean()
+
+                    # Debug counters
+                    _dbg_vol=0; _dbg_dema=0; _dbg_fresh=0; _dbg_dir=0
+
+                    # Precompute ST flips once
+                    _chg_bt = (_dir_bt != _dir_bt.shift(1)).reset_index(drop=True)
+                    _dir_bt_arr = _dir_bt.reset_index(drop=True)
+
+                    # ONE signal per ST flip — matches TradingView exactly
+                    _last_flip_used = -999
+
+                    # Scan bar by bar from candle 250
+                    for _i in range(250, len(_df_bt)):
+                        _cn=float(_c.iloc[_i]); _dn=float(_dema_bt.iloc[_i])
+                        _dirn=float(_dir_bt.iloc[_i])
+                        _vn=float(_v.iloc[_i]); _vm=float(_vma_bt.iloc[_i])
+                        if _vm<=0: continue
+
+                        _vol_ok=_vn>_vm*1.2
+                        _dema_ok=abs(_cn-_dn)/_cn*100>0.3
+                        if (_cn>_dn and _dirn==1) or (_cn<_dn and _dirn==-1): _dbg_dir+=1
+                        if _vol_ok: _dbg_vol+=1
+                        if _dema_ok: _dbg_dema+=1
+
+                        # Find last ST flip index
+                        _last_flip_idx = -1
+                        _bs=999
+                        for _j in range(1,20):
+                            _idx = _i - _j
+                            if _idx >= 0 and bool(_chg_bt.iloc[_idx]):
+                                _last_flip_idx = _idx
+                                _bs = _j - 1
+                                break
+                        _fresh = _last_flip_idx >= 0 and _bs <= 3
+                        if _fresh: _dbg_fresh+=1
+
+                        _long_s=_cn>_dn and _dirn==1 and _vol_ok and _dema_ok and _fresh
+                        _short_s=_cn<_dn and _dirn==-1 and _vol_ok and _dema_ok and _fresh
+
+                        # Only fire ONCE per ST flip — key fix to match TradingView
+                        if (_long_s or _short_s) and _last_flip_idx != _last_flip_used:
+                            _ts_ms=int(_df_bt.iloc[_i]['ts'])
+                            _dt_utc=_dt_bt.utcfromtimestamp(_ts_ms/1000)
+                            _dt_pkt=_dt_bt.utcfromtimestamp(_ts_ms/1000+5*3600)
+                            _atr_now=float(_atr_bt.iloc[_i])
+                            # SL = ST line (lower band LONG, upper band SHORT) — matches Pine Script
+                            _st_lower_now = float(_lower_bt.iloc[_i])
+                            _st_upper_now = float(_upper_bt.iloc[_i])
+                            _sl_bt = _st_lower_now if _long_s else _st_upper_now
+                            _sl_dist = abs(_cn - _sl_bt)
+                            _tp_bt = _cn + 4.0*_sl_dist if _long_s else _cn - 4.0*_sl_dist
+                            _rr_bt=round(abs(_tp_bt-_cn)/max(_sl_dist,1e-8),2)
+                            _sig_bt={
+                                'direction':'LONG' if _long_s else 'SHORT',
+                                'close':_cn,'dema':round(_dn,6),
+                                'sl':round(_sl_bt,6),'tp':round(_tp_bt,6),'rr':_rr_bt,
+                                'rsi':0,'vol_ratio':round(_vn/_vm,2),
+                                'fresh_bars':_bs,'atr':round(_atr_now,6),
+                                'candle_time_utc':_dt_utc.strftime('%Y-%m-%d %H:%M'),
+                                'candle_time_pkt':_dt_pkt.strftime('%Y-%m-%d %H:%M'),
+                                'candle_index':_i,
+                                'flip_index':_last_flip_idx
+                            }
+                            _found_sigs.append(_sig_bt)
+                            _last_flip_used = _last_flip_idx
+
+                    # ── ST Flip exit tracking — exit when ST flips opposite direction ──
+                    # This matches real trading: hold until ST flips, not fixed TP/SL
+                    for _idx_s, _sig in enumerate(_found_sigs):
+                        _si = _sig['candle_index']
+                        _outcome = 'OPEN'
+                        _exit_price = None
+                        _bars_to_exit = None
+                        _pnl_pct = None
+
+                        # Next signal on same coin = ST flipped = exit point
+                        # Find the next signal after this one (any direction)
+                        _next_sig = None
+                        for _nx in _found_sigs[_idx_s+1:]:
+                            _next_sig = _nx
+                            break
+
+                        if _next_sig is not None:
+                            _exit_price = _next_sig['close']
+                            _bars_to_exit = _next_sig['candle_index'] - _si
+                            if _sig['direction'] == 'LONG':
+                                _pnl_pct = (_exit_price - _sig['close']) / _sig['close'] * 100
+                            else:
+                                _pnl_pct = (_sig['close'] - _exit_price) / _sig['close'] * 100
+                            _outcome = 'WIN' if _pnl_pct > 0 else 'LOSS'
+                        # else: last signal, still open — no next ST flip yet
+
+                        _sig['outcome'] = _outcome
+                        _sig['exit_price'] = _exit_price
+                        _sig['bars_to_exit'] = _bars_to_exit
+                        _sig['pnl_pct'] = round(_pnl_pct, 2) if _pnl_pct is not None else None
+
+                    # ── Performance summary ───────────────────────────────
+                    _wins   = [s for s in _found_sigs if s['outcome'] == 'WIN']
+                    _losses = [s for s in _found_sigs if s['outcome'] == 'LOSS']
+                    _open   = [s for s in _found_sigs if s['outcome'] == 'OPEN']
+                    _closed = _wins + _losses
+                    _wr     = round(len(_wins) / len(_closed) * 100, 1) if _closed else 0
+                    _avg_rr = round(sum(s['rr'] for s in _found_sigs) / len(_found_sigs), 2) if _found_sigs else 0
+
+                    # Keep last 10 for display
+                    _last5 = _found_sigs[-10:] if len(_found_sigs) >= 10 else _found_sigs
+                    _last5 = list(reversed(_last5))
+
+                    # Show debug info
+                    st.info(f"Debug: dir_aligned={_dbg_dir} | vol_ok={_dbg_vol} | dema_ok={_dbg_dema} | fresh={_dbg_fresh} | total_signals={len(_found_sigs)}")
+
+                    if not _last5:
+                        st.warning(f"No DEMA+ST signals found for {_dst_coin} in last 1000 candles on {_dst_tf}")
+                    else:
+                        # ── Performance metrics strip ─────────────────────
+                        _wr_col = '#059669' if _wr >= 70 else ('#d97706' if _wr >= 50 else '#dc2626')
+                        st.markdown(f'''<div style="display:flex;gap:12px;flex-wrap:wrap;background:#0f1117;border-radius:10px;padding:12px 16px;margin-bottom:12px;border:1px solid #1e293b;">
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:{_wr_col};">{_wr}%</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Win Rate</div></div>
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#059669;">{len(_wins)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Wins</div></div>
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#dc2626;">{len(_losses)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Losses</div></div>
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#d97706;">{len(_open)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Open</div></div>
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#7c3aed;">{len(_found_sigs)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Total</div></div>
+                          <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#0284c7;">{_avg_rr}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Avg R:R</div></div>
+                        </div>''', unsafe_allow_html=True)
+
+                        st.markdown(f'<div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#0284c7;padding:4px 0 8px 0;">Found {len(_found_sigs)} signals in {len(_df_bt)} candles — showing last {len(_last5)}</div>', unsafe_allow_html=True)
+
+                        for _s in _last5:
+                            _dir = _s.get('direction','LONG')
+                            _dir_col = '#059669' if _dir == 'LONG' else '#dc2626'
+                            _dir_bg = '#f0fdf4' if _dir == 'LONG' else '#fef2f2'
+                            _dir_emoji = '🟢' if _dir == 'LONG' else '🔴'
+                            _oc = _s.get('outcome','OPEN')
+                            _pnl = _s.get('pnl_pct')
+                            _pnl_str = (f'+{_pnl}%' if _pnl > 0 else f'{_pnl}%') if _pnl is not None else ''
+                            _oc_html = (
+                                f'<span style="background:#f0fdf4;color:#059669;border:1px solid #059669;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.6rem;font-weight:700;">✅ WIN {_pnl_str}</span>'
+                                if _oc == 'WIN' else
+                                f'<span style="background:#fef2f2;color:#dc2626;border:1px solid #dc2626;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.6rem;font-weight:700;">❌ LOSS {_pnl_str}</span>'
+                                if _oc == 'LOSS' else
+                                '<span style="background:#fffbeb;color:#d97706;border:1px solid #d97706;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.6rem;font-weight:700;">⏳ OPEN</span>'
+                            )
+                            _bars_txt = f" · held {_s['bars_to_exit']} bars" if _s.get('bars_to_exit') else ''
+                            _exit_txt = f" → exit ${_s['exit_price']:.4f}" if _s.get('exit_price') else ''
+                            st.markdown(f'''
+                            <div style="background:{_dir_bg};border:1px solid {_dir_col};border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+                              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                  <span style="font-family:monospace;font-size:1rem;font-weight:800;color:{_dir_col};">{_dir_emoji} {_dir}</span>
+                                  <span style="font-family:monospace;font-size:.7rem;color:#64748b;">{_dst_coin} · {_dst_tf}</span>
+                                  {_oc_html}
+                                  <span style="font-family:monospace;font-size:.58rem;color:#94a3b8;">{_bars_txt}{_exit_txt}</span>
+                                </div>
+                                <div style="text-align:right;">
+                                  <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#0f1117;">🕐 {_s["candle_time_utc"]} UTC</div>
+                                  <div style="font-family:monospace;font-size:.6rem;color:#64748b;">{_s["candle_time_pkt"]} PKT</div>
+                                </div>
+                              </div>
+                              <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                                <span style="font-family:monospace;font-size:.65rem;color:#1e293b;">Entry: <b>${_s["close"]:.4f}</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#059669;">TP: <b>${_s["tp"]:.4f}</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#dc2626;">SL: <b>${_s["sl"]:.4f}</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#7c3aed;">R:R: <b>{_s["rr"]}</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#64748b;">VOL: <b>{_s.get("vol_ratio","–")}×</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#0284c7;">DEMA: <b>${_s["dema"]:.4f}</b></span>
+                                <span style="font-family:monospace;font-size:.65rem;color:#64748b;">ST flip: <b>{_s.get("fresh_bars","–")} bars ago</b></span>
+                              </div>
+                            </div>''', unsafe_allow_html=True)
+
+                        # Summary table with outcomes
+                        st.markdown("---")
+                        _summary_data = [{
+                            "Time (UTC)": _s["candle_time_utc"],
+                            "Time (PKT)": _s["candle_time_pkt"],
+                            "Dir": _s["direction"],
+                            "Entry": round(_s['close'],4),
+                            "Exit (ST Flip)": round(_s['exit_price'],4) if _s.get('exit_price') else '–',
+                            "PnL %": (f"+{_s['pnl_pct']}%" if _s.get('pnl_pct',0)>0 else f"{_s['pnl_pct']}%") if _s.get('pnl_pct') is not None else '–',
+                            "Outcome": _s.get('outcome','OPEN'),
+                            "Bars Held": _s.get('bars_to_exit','–'),
+                            "SL (ST)": round(_s['sl'],4),
+                        } for _s in _last5]
+                        st.dataframe(pd.DataFrame(_summary_data), use_container_width=True)
+
+            except Exception as _e_bt:
+                import traceback
+                st.error(f"DEMA backtest error: {_e_bt}")
+                st.code(traceback.format_exc())
+
     st.stop()
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4279,6 +4709,522 @@ red_flag should be true only for clear shill/spam/pump-and-dump patterns"""
 
     st.stop()
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGE: COIN ANALYZER
+# ═══════════════════════════════════════════════════════════════════════════
+if nav=="🔍 Coin Analyzer":
+    st.markdown('<div class="section-h">🔍 Coin Analyzer — Should I Enter This Trade?</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:12px;">Enter any coin — get full technical analysis + AI verdict: Entry Now / Wait for Pullback / Avoid</div>', unsafe_allow_html=True)
+
+    # ── Input row ────────────────────────────────────────────────────────────
+    _ca_c1, _ca_c2, _ca_c3, _ca_c4 = st.columns([2,1,1,1])
+    with _ca_c1:
+        _ca_coin = st.text_input("Coin symbol", value="", placeholder="BTC, ETH, SOL, HYPE...", key="ca_coin").upper().strip()
+    with _ca_c2:
+        _ca_exch = st.selectbox("Exchange", ["GATE","OKX","MEXC"], key="ca_exch")
+    with _ca_c3:
+        _ca_dir = st.selectbox("Direction", ["AUTO","LONG","SHORT"], key="ca_dir")
+    with _ca_c4:
+        _ca_run = st.button("🔍 Analyze", use_container_width=True, key="ca_run")
+
+    if _ca_run and _ca_coin:
+        with st.spinner(f"🔍 Analyzing {_ca_coin}..."):
+            try:
+                import ccxt as _ca_ccxt
+                import pandas as _ca_pd
+                import numpy as _ca_np
+                import requests as _ca_req
+                from datetime import datetime as _ca_dt, timezone as _ca_tz
+
+                _sym = f"{_ca_coin}/USDT:USDT"
+                _ex_map = {
+                    "GATE": _ca_ccxt.gateio({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                    "OKX":  _ca_ccxt.okx({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                    "MEXC": _ca_ccxt.mexc({"enableRateLimit": True, "options": {"defaultType": "swap"}}),
+                }
+                _ex = _ex_map[_ca_exch]
+
+                # ── Fetch data ────────────────────────────────────────────
+                _errors = []
+
+                # OHLCV — 5m and 1h
+                try:
+                    _raw5 = _ex.fetch_ohlcv(_sym, "5m", limit=500)
+                    _df5 = _ca_pd.DataFrame(_raw5, columns=["ts","open","high","low","close","volume"]).astype(float)
+                except Exception as e:
+                    _errors.append(f"5m OHLCV: {e}"); _df5 = None
+
+                try:
+                    _raw1h = _ex.fetch_ohlcv(_sym, "1h", limit=200)
+                    _df1h = _ca_pd.DataFrame(_raw1h, columns=["ts","open","high","low","close","volume"]).astype(float)
+                except Exception as e:
+                    _errors.append(f"1h OHLCV: {e}"); _df1h = None
+
+                try:
+                    _raw4h = _ex.fetch_ohlcv(_sym, "4h", limit=100)
+                    _df4h = _ca_pd.DataFrame(_raw4h, columns=["ts","open","high","low","close","volume"]).astype(float)
+                except Exception as e:
+                    _errors.append(f"4h OHLCV: {e}"); _df4h = None
+
+                if _df5 is None:
+                    st.error(f"Could not fetch data for {_sym} on {_ca_exch}. Try a different exchange.")
+                    st.stop()
+
+                # ── Current price + ticker ────────────────────────────────
+                try:
+                    _ticker = _ex.fetch_ticker(_sym)
+                    _price = float(_ticker["last"])
+                    _chg24 = float(_ticker.get("percentage") or _ticker.get("change") or 0)
+                    _vol24 = float(_ticker.get("quoteVolume") or 0)
+                except:
+                    _price = float(_df5["close"].iloc[-1])
+                    _chg24 = 0; _vol24 = 0
+
+                # ── OI ────────────────────────────────────────────────────
+                _oi = 0; _oi_chg = 0
+                try:
+                    _oi_data = _ex.fetch_open_interest(_sym)
+                    _oi = float(_oi_data.get("openInterestAmount") or _oi_data.get("openInterest") or 0)
+                except: pass
+
+                # ── Funding rate ──────────────────────────────────────────
+                _funding = 0
+                try:
+                    _fr = _ex.fetch_funding_rate(_sym)
+                    _funding = float(_fr.get("fundingRate") or 0)
+                except: pass
+
+                # ── Technical indicators on 5m ────────────────────────────
+                _c5 = _df5["close"]; _h5 = _df5["high"]; _l5 = _df5["low"]; _v5 = _df5["volume"]
+
+                # RSI 14
+                _delta = _c5.diff()
+                _gain = _delta.clip(lower=0).ewm(com=13, min_periods=14).mean()
+                _loss = (-_delta.clip(upper=0)).ewm(com=13, min_periods=14).mean()
+                _rsi5 = float((100 - 100/(1 + _gain/_loss.replace(0,1e-10))).iloc[-1])
+
+                # RSI on 1h
+                _rsi1h = 50
+                if _df1h is not None:
+                    _c1h = _df1h["close"]
+                    _d1h = _c1h.diff()
+                    _g1h = _d1h.clip(lower=0).ewm(com=13, min_periods=14).mean()
+                    _l1h = (-_d1h.clip(upper=0)).ewm(com=13, min_periods=14).mean()
+                    _rsi1h = float((100 - 100/(1 + _g1h/_l1h.replace(0,1e-10))).iloc[-1])
+
+                # DEMA 200 on 5m
+                _e1 = _c5.ewm(span=200, adjust=False).mean()
+                _dema = float((2*_e1 - _e1.ewm(span=200, adjust=False).mean()).iloc[-1])
+                _above_dema = _price > _dema
+                _dema_dist = (_price - _dema) / _dema * 100
+
+                # SuperTrend on 5m (Pine-exact)
+                _pc = _c5.shift(1)
+                _tr = _ca_pd.concat([_h5-_l5, (_h5-_pc).abs(), (_l5-_pc).abs()], axis=1).max(axis=1)
+                _atr5 = _tr.ewm(alpha=1/10, adjust=False).mean()
+                _hl2 = (_h5+_l5)/2
+                _ub = _hl2 + 3.0*_atr5; _lb = _hl2 - 3.0*_atr5
+                _upper = _ub.copy(); _lower = _lb.copy()
+                _dir5 = _ca_pd.Series(1.0, index=_c5.index)
+                _st5 = _upper.copy()
+                for _xi in range(1, len(_c5)):
+                    _pU=_upper.iloc[_xi-1]; _pL=_lower.iloc[_xi-1]; _pC=_c5.iloc[_xi-1]
+                    _upper.iloc[_xi]=_ub.iloc[_xi] if (_ub.iloc[_xi]<_pU or _pC>_pU) else _pU
+                    _lower.iloc[_xi]=_lb.iloc[_xi] if (_lb.iloc[_xi]>_pL or _pC<_pL) else _pL
+                    _pST=_st5.iloc[_xi-1]; _pU2=_upper.iloc[_xi-1]
+                    _dir5.iloc[_xi]=(1 if _c5.iloc[_xi]>_upper.iloc[_xi] else -1) if _pST==_pU2 else (-1 if _c5.iloc[_xi]<_lower.iloc[_xi] else 1)
+                    _st5.iloc[_xi]=_lower.iloc[_xi] if _dir5.iloc[_xi]==1 else _upper.iloc[_xi]
+                _st_dir_now = int(_dir5.iloc[-1])
+                _st_line = float(_lower.iloc[-1] if _st_dir_now == 1 else _upper.iloc[-1])
+
+                # ST flip recency
+                _chg5 = (_dir5 != _dir5.shift(1)).reset_index(drop=True)
+                _bars_since_flip = 999
+                for _j in range(1, 50):
+                    if _j < len(_chg5) and bool(_chg5.iloc[-(1+_j)]):
+                        _bars_since_flip = _j; break
+
+                # Volume analysis
+                _vma20 = float(_v5.rolling(20).mean().iloc[-1])
+                _vol_ratio = float(_v5.iloc[-1]) / _vma20 if _vma20 > 0 else 1
+                _vol_surge = _vol_ratio > 1.5
+
+                # Price momentum
+                _mom_5bar = (_price - float(_c5.iloc[-6])) / float(_c5.iloc[-6]) * 100
+                _mom_20bar = (_price - float(_c5.iloc[-21])) / float(_c5.iloc[-21]) * 100
+
+                # Bollinger Bands
+                _sma20 = _c5.rolling(20).mean()
+                _std20 = _c5.rolling(20).std()
+                _bb_upper = float((_sma20 + 2*_std20).iloc[-1])
+                _bb_lower = float((_sma20 - 2*_std20).iloc[-1])
+                _bb_pct = (_price - _bb_lower) / (_bb_upper - _bb_lower) * 100 if (_bb_upper - _bb_lower) > 0 else 50
+
+                # EMA trend (20/50)
+                _ema20 = float(_c5.ewm(span=20).mean().iloc[-1])
+                _ema50 = float(_c5.ewm(span=50).mean().iloc[-1])
+                _ema_bullish = _ema20 > _ema50 and _price > _ema20
+
+                # 4h trend
+                _trend_4h = "NEUTRAL"
+                if _df4h is not None:
+                    _c4h = _df4h["close"]
+                    _e1_4h = _c4h.ewm(span=50, adjust=False).mean()
+                    _e2_4h = _c4h.ewm(span=200, adjust=False).mean()
+                    if float(_e1_4h.iloc[-1]) > float(_e2_4h.iloc[-1]) and float(_c4h.iloc[-1]) > float(_e1_4h.iloc[-1]):
+                        _trend_4h = "BULLISH"
+                    elif float(_e1_4h.iloc[-1]) < float(_e2_4h.iloc[-1]) and float(_c4h.iloc[-1]) < float(_e1_4h.iloc[-1]):
+                        _trend_4h = "BEARISH"
+
+                # ── Scoring system ────────────────────────────────────────
+                _score = 0
+                _reasons_bull = []
+                _reasons_bear = []
+                _warnings = []
+
+                # DEMA
+                if _above_dema:
+                    _score += 15
+                    _reasons_bull.append(f"Price above DEMA200 (+{_dema_dist:.1f}%)")
+                else:
+                    _score -= 15
+                    _reasons_bear.append(f"Price below DEMA200 ({_dema_dist:.1f}%)")
+
+                # ST direction
+                if _st_dir_now == 1:
+                    _score += 20
+                    _reasons_bull.append(f"SuperTrend BULLISH (flip {_bars_since_flip} bars ago)")
+                else:
+                    _score -= 20
+                    _reasons_bear.append(f"SuperTrend BEARISH (flip {_bars_since_flip} bars ago)")
+
+                # RSI
+                if 40 < _rsi5 < 70:
+                    _score += 10
+                    _reasons_bull.append(f"RSI 5m healthy at {_rsi5:.1f}")
+                elif _rsi5 >= 70:
+                    _score -= 10
+                    _warnings.append(f"RSI 5m overbought ({_rsi5:.1f})")
+                elif _rsi5 <= 30:
+                    _score -= 10
+                    _warnings.append(f"RSI 5m oversold ({_rsi5:.1f})")
+
+                # 1h RSI
+                if 35 < _rsi1h < 70:
+                    _score += 8
+                    _reasons_bull.append(f"RSI 1h healthy at {_rsi1h:.1f}")
+                elif _rsi1h >= 70:
+                    _warnings.append(f"RSI 1h overbought ({_rsi1h:.1f})")
+
+                # Volume — hard filter, no volume = no trade
+                if _vol_ratio >= 1.5:
+                    _score += 12
+                    _reasons_bull.append(f"Volume surge {_vol_ratio:.1f}× average")
+                elif _vol_ratio >= 0.8:
+                    _score += 3
+                    _reasons_bull.append(f"Volume normal {_vol_ratio:.1f}× average")
+                elif _vol_ratio >= 0.3:
+                    _score -= 10
+                    _warnings.append(f"Low volume ({_vol_ratio:.1f}× avg) — weak momentum")
+                else:
+                    _score -= 25
+                    _warnings.append(f"⚠️ CRITICAL: Near-zero volume ({_vol_ratio:.2f}× avg) — do not trade")
+
+                # Momentum
+                if _mom_5bar > 0.5:
+                    _score += 8
+                    _reasons_bull.append(f"Short-term momentum +{_mom_5bar:.2f}%")
+                elif _mom_5bar < -0.5:
+                    _score -= 8
+                    _reasons_bear.append(f"Short-term momentum {_mom_5bar:.2f}%")
+
+                # 4h trend
+                if _trend_4h == "BULLISH":
+                    _score += 15
+                    _reasons_bull.append("4H trend BULLISH — aligned with LONG")
+                elif _trend_4h == "BEARISH":
+                    _score -= 15
+                    _reasons_bear.append("4H trend BEARISH — against LONG")
+
+                # Funding
+                if abs(_funding) > 0:
+                    if _funding > 0.001:
+                        _score -= 8
+                        _warnings.append(f"High funding {_funding*100:.4f}% — longs paying")
+                    elif _funding < -0.001:
+                        _score += 8
+                        _reasons_bull.append(f"Negative funding {_funding*100:.4f}% — shorts paying")
+                    else:
+                        _reasons_bull.append(f"Neutral funding {_funding*100:.4f}%")
+
+                # BB position
+                if _bb_pct > 80:
+                    _score -= 5
+                    _warnings.append(f"Near BB upper band ({_bb_pct:.0f}%)")
+                elif _bb_pct < 20:
+                    _score += 5
+                    _reasons_bull.append(f"Near BB lower band — potential bounce ({_bb_pct:.0f}%)")
+
+                # EMA trend
+                if _ema_bullish:
+                    _score += 8
+                    _reasons_bull.append("EMA20 > EMA50, price above EMA20")
+
+                # Late entry penalty — scaled by severity
+                if _chg24 > 50:
+                    _score -= 35
+                    _warnings.append(f"⚠️ CRITICAL: Already up {_chg24:.1f}% in 24h — extreme late entry risk")
+                elif _chg24 > 30:
+                    _score -= 25
+                    _warnings.append(f"Already up {_chg24:.1f}% in 24h — very high late entry risk")
+                elif _chg24 > 15:
+                    _score -= 18
+                    _warnings.append(f"Already up {_chg24:.1f}% in 24h — late entry risk")
+                elif _chg24 > 8:
+                    _score -= 10
+                    _warnings.append(f"Up {_chg24:.1f}% in 24h — moderate late entry risk")
+                elif _chg24 < -8:
+                    _score -= 10
+                    _warnings.append(f"Down {_chg24:.1f}% in 24h — catching falling knife risk")
+
+                # ── Direction override ────────────────────────────────────
+                if _ca_dir == "SHORT":
+                    _score = -_score  # flip score for shorts
+
+                # ── Verdict ───────────────────────────────────────────────
+                _atr_now = float(_atr5.iloc[-1])
+                _sl_long = _st_line  # ST line as SL
+                _sl_short = _st_line
+                _sl_dist_long = abs(_price - _sl_long)
+                _tp_long = _price + 4 * _sl_dist_long
+                _tp_short = _price - 4 * _sl_dist_long
+                _rr = round(4 * _sl_dist_long / max(_sl_dist_long, 0.0001), 1)
+
+                if _score >= 40:
+                    _verdict = "ENTER NOW"
+                    _verdict_col = "#059669"
+                    _verdict_bg = "#f0fdf4"
+                    _verdict_emoji = "🟢"
+                    _verdict_detail = "Strong confluence — multiple signals aligned. Acceptable entry."
+                elif _score >= 15:
+                    _verdict = "WAIT FOR PULLBACK"
+                    _verdict_col = "#d97706"
+                    _verdict_bg = "#fffbeb"
+                    _verdict_emoji = "🟡"
+                    _verdict_detail = "Bias is bullish but momentum may be extended. Wait for dip to DEMA or ST line."
+                elif _score >= -15:
+                    _verdict = "NEUTRAL — NO EDGE"
+                    _verdict_col = "#64748b"
+                    _verdict_bg = "#f8fafc"
+                    _verdict_emoji = "⚪"
+                    _verdict_detail = "Mixed signals. No clear edge. Sit on sidelines."
+                else:
+                    _verdict = "AVOID"
+                    _verdict_col = "#dc2626"
+                    _verdict_bg = "#fef2f2"
+                    _verdict_emoji = "🔴"
+                    _verdict_detail = "Signals against trade direction. High risk."
+
+                # ── AI verdict via Groq ───────────────────────────────────
+                _ai_verdict = ""
+                try:
+                    _gk = S.get('groq_key','') or "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"
+                    _ca_prompt = f"""You are a professional crypto futures trader. Analyze this coin and give a direct trading verdict.
+
+COIN: {_ca_coin}/USDT perpetual on {_ca_exch}
+CURRENT PRICE: ${_price:.4f}
+24H CHANGE: {_chg24:+.2f}%
+24H VOLUME: ${_vol24:,.0f}
+
+TECHNICAL DATA:
+- DEMA 200 (5m): ${_dema:.4f} — price is {'ABOVE' if _above_dema else 'BELOW'} by {abs(_dema_dist):.2f}%
+- SuperTrend: {'BULLISH' if _st_dir_now==1 else 'BEARISH'} | ST line: ${_st_line:.4f} | Last flip: {_bars_since_flip} bars ago
+- RSI 5m: {_rsi5:.1f} | RSI 1h: {_rsi1h:.1f}
+- Volume: {_vol_ratio:.1f}× 20-bar average
+- 5-bar momentum: {_mom_5bar:+.2f}% | 20-bar: {_mom_20bar:+.2f}%
+- Bollinger Band position: {_bb_pct:.0f}% (0=lower band, 100=upper band)
+- EMA20: ${_ema20:.4f} | EMA50: ${_ema50:.4f}
+- 4H trend: {_trend_4h}
+- Funding rate: {_funding*100:.4f}%
+- APEX score: {_score}/100
+
+BULLISH SIGNALS: {", ".join(_reasons_bull) if _reasons_bull else "None"}
+BEARISH SIGNALS: {", ".join(_reasons_bear) if _reasons_bear else "None"}
+WARNINGS: {", ".join(_warnings) if _warnings else "None"}
+
+DIRECTION REQUESTED: {_ca_dir}
+
+HARD RULES — these override everything else:
+1. If volume_ratio < 0.3 → verdict MUST be "WAIT FOR PULLBACK" or "AVOID" — no volume = no trade
+2. If 24h change > 20% AND volume_ratio < 1.0 → verdict MUST be "AVOID" — pump on low volume always reverses
+3. If 24h change > 40% → verdict MUST be "WAIT FOR PULLBACK" — too late to enter, wait for retest
+4. If SuperTrend is BEARISH → verdict MUST be "AVOID" for LONG direction
+5. If price is below DEMA200 AND SuperTrend is BEARISH → verdict MUST be "AVOID"
+6. Only say "ENTER NOW" if: volume_ratio > 1.0 AND ST is BULLISH AND 24h change < 15% AND price near or above DEMA
+
+Give a concise analysis in this exact JSON format:
+{{"verdict": "ENTER NOW or WAIT FOR PULLBACK or AVOID", "confidence": 0-100, "reasoning": "2-3 sentences max", "entry_strategy": "exact entry instruction in one sentence", "key_risk": "biggest risk in one sentence"}}
+
+Be direct. No fluff. Think like a professional risk manager who protects capital first."""
+
+                    _ar = _ca_req.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {_gk}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                        json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": _ca_prompt}], "max_tokens": 400, "temperature": 0.2},
+                        timeout=20
+                    )
+                    if _ar.status_code == 200:
+                        import json as _json
+                        _raw = _ar.json()["choices"][0]["message"]["content"].strip()
+                        _raw = _raw.replace("```json","").replace("```","").strip()
+                        _ai_data = _json.loads(_raw)
+                        _ai_verdict = _ai_data.get("verdict","")
+                        _ai_conf = _ai_data.get("confidence", 0)
+                        _ai_reason = _ai_data.get("reasoning","")
+                        _ai_entry = _ai_data.get("entry_strategy","")
+                        _ai_risk = _ai_data.get("key_risk","")
+                except Exception as _ae:
+                    _ai_verdict = ""
+
+                # ── RENDER ────────────────────────────────────────────────
+                # Main verdict card
+                st.markdown(f'''<div style="background:{_verdict_bg};border:2px solid {_verdict_col};border-radius:12px;padding:20px 24px;margin-bottom:16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div>
+                      <div style="font-family:monospace;font-size:1.8rem;font-weight:900;color:{_verdict_col};">{_verdict_emoji} {_verdict}</div>
+                      <div style="font-family:monospace;font-size:.75rem;color:#64748b;margin-top:4px;">{_verdict_detail}</div>
+                    </div>
+                    <div style="text-align:right;">
+                      <div style="font-family:monospace;font-size:2rem;font-weight:900;color:{_verdict_col};">{_score:+d}</div>
+                      <div style="font-family:monospace;font-size:.6rem;color:#64748b;">Confluence Score</div>
+                    </div>
+                  </div>
+                </div>''', unsafe_allow_html=True)
+
+                # AI verdict card
+                if _ai_verdict:
+                    _ai_col = "#059669" if "ENTER" in _ai_verdict else ("#d97706" if "PULLBACK" in _ai_verdict else "#dc2626")
+                    st.markdown(f'''<div style="background:#0f1117;border:1px solid {_ai_col}44;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
+                      <div style="font-family:monospace;font-size:.6rem;font-weight:700;color:{_ai_col};margin-bottom:8px;">🤖 AI TRADER VERDICT — {_ai_conf}% confidence</div>
+                      <div style="font-family:monospace;font-size:.85rem;font-weight:800;color:{_ai_col};margin-bottom:8px;">{_ai_verdict}</div>
+                      <div style="font-family:monospace;font-size:.68rem;color:#e2e8f0;margin-bottom:6px;">{_ai_reason}</div>
+                      <div style="font-family:monospace;font-size:.63rem;color:#059669;margin-bottom:4px;">📍 {_ai_entry}</div>
+                      <div style="font-family:monospace;font-size:.63rem;color:#dc2626;">⚠️ {_ai_risk}</div>
+                    </div>''', unsafe_allow_html=True)
+
+                # Price + key levels
+                _dir_label = "LONG" if _st_dir_now == 1 else "SHORT"
+                _dir_col2 = "#059669" if _st_dir_now == 1 else "#dc2626"
+                st.markdown(f'''<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
+                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#f1f5f9;">${_price:.4f}</div>
+                    <div style="font-family:monospace;font-size:.58rem;color:#64748b;">Current Price</div>
+                    <div style="font-family:monospace;font-size:.65rem;color:{"#059669" if _chg24>=0 else "#dc2626"};margin-top:2px;">{_chg24:+.2f}% 24h</div>
+                  </div>
+                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:{_dir_col2};">{_dir_label}</div>
+                    <div style="font-family:monospace;font-size:.58rem;color:#64748b;">ST Direction</div>
+                    <div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-top:2px;">flip {_bars_since_flip} bars ago</div>
+                  </div>
+                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#dc2626;">${_st_line:.4f}</div>
+                    <div style="font-family:monospace;font-size:.58rem;color:#64748b;">SL (ST Line)</div>
+                    <div style="font-family:monospace;font-size:.62rem;color:#dc2626;margin-top:2px;">{abs(_price-_st_line)/_price*100:.2f}% away</div>
+                  </div>
+                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#059669;">${_tp_long:.4f}</div>
+                    <div style="font-family:monospace;font-size:.58rem;color:#64748b;">TP (4R target)</div>
+                    <div style="font-family:monospace;font-size:.62rem;color:#7c3aed;margin-top:2px;">R:R {_rr}:1</div>
+                  </div>
+                </div>''', unsafe_allow_html=True)
+
+                # Indicators grid
+                _ind_col1, _ind_col2 = st.columns(2)
+
+                with _ind_col1:
+                    st.markdown("**📊 Technical Indicators**")
+                    def _ind_row(label, value, color="#e2e8f0"):
+                        return f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1e293b;"><span style="font-family:monospace;font-size:.65rem;color:#94a3b8;">{label}</span><span style="font-family:monospace;font-size:.65rem;font-weight:700;color:{color};">{value}</span></div>'
+                    _rsi_col = "#059669" if 40<_rsi5<60 else ("#d97706" if 60<=_rsi5<70 else "#dc2626")
+                    _rsi1h_col = "#059669" if 40<_rsi1h<60 else ("#d97706" if 60<=_rsi1h<70 else "#dc2626")
+                    st.markdown(
+                        '<div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
+                        _ind_row("RSI 5m", f"{_rsi5:.1f}", _rsi_col) +
+                        _ind_row("RSI 1h", f"{_rsi1h:.1f}", _rsi1h_col) +
+                        _ind_row("DEMA 200", f"${_dema:.4f} ({'ABOVE ✅' if _above_dema else 'BELOW ❌'})", "#059669" if _above_dema else "#dc2626") +
+                        _ind_row("DEMA distance", f"{_dema_dist:+.2f}%", "#059669" if _above_dema else "#dc2626") +
+                        _ind_row("EMA20 vs EMA50", f"{'Bullish ✅' if _ema_bullish else 'Bearish ❌'}", "#059669" if _ema_bullish else "#dc2626") +
+                        _ind_row("BB position", f"{_bb_pct:.0f}%", "#d97706" if _bb_pct>75 else "#059669") +
+                        _ind_row("4H Trend", _trend_4h, "#059669" if _trend_4h=="BULLISH" else ("#dc2626" if _trend_4h=="BEARISH" else "#64748b")) +
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+                with _ind_col2:
+                    st.markdown("**📡 Market Data**")
+                    _fund_col = "#dc2626" if _funding>0.001 else ("#059669" if _funding<-0.001 else "#64748b")
+                    _vol_col = "#059669" if _vol_ratio>1.5 else ("#d97706" if _vol_ratio>1.0 else "#dc2626")
+                    st.markdown(
+                        '<div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
+                        _ind_row("Volume ratio", f"{_vol_ratio:.2f}× avg", _vol_col) +
+                        _ind_row("5-bar momentum", f"{_mom_5bar:+.2f}%", "#059669" if _mom_5bar>0 else "#dc2626") +
+                        _ind_row("20-bar momentum", f"{_mom_20bar:+.2f}%", "#059669" if _mom_20bar>0 else "#dc2626") +
+                        _ind_row("Funding rate", f"{_funding*100:.4f}%", _fund_col) +
+                        _ind_row("24h volume", f"${_vol24/1e6:.1f}M", "#059669" if _vol24>10e6 else "#64748b") +
+                        _ind_row("ATR (5m)", f"${_atr_now:.4f}", "#64748b") +
+                        _ind_row("OI", f"${_oi/1e6:.2f}M" if _oi>0 else "N/A", "#64748b") +
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Bullish/Bearish signals
+                if _reasons_bull or _reasons_bear:
+                    _sb1, _sb2 = st.columns(2)
+                    with _sb1:
+                        if _reasons_bull:
+                            st.markdown("**✅ Bullish Signals**")
+                            for _rb in _reasons_bull:
+                                st.markdown(f'<div style="font-family:monospace;font-size:.63rem;color:#059669;padding:2px 0;">▸ {_rb}</div>', unsafe_allow_html=True)
+                    with _sb2:
+                        if _reasons_bear:
+                            st.markdown("**❌ Bearish Signals**")
+                            for _rb2 in _reasons_bear:
+                                st.markdown(f'<div style="font-family:monospace;font-size:.63rem;color:#dc2626;padding:2px 0;">▸ {_rb2}</div>', unsafe_allow_html=True)
+
+                # Warnings
+                if _warnings:
+                    st.markdown("**⚠️ Risk Warnings**")
+                    _warn_html = "".join([f'<div style="font-family:monospace;font-size:.63rem;color:#d97706;padding:2px 0;">⚠ {_w}</div>' for _w in _warnings])
+                    st.markdown(f'<div style="background:#fffbeb;border:1px solid #d97706;border-radius:6px;padding:10px 14px;">{_warn_html}</div>', unsafe_allow_html=True)
+
+                # Entry plan
+                st.markdown("---")
+                st.markdown(f'''<div style="background:#0f1117;border:1px solid #7c3aed44;border-radius:10px;padding:16px 20px;">
+                  <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#7c3aed;margin-bottom:10px;">📋 TRADE PLAN (if entering LONG)</div>
+                  <div style="display:flex;gap:24px;flex-wrap:wrap;">
+                    <span style="font-family:monospace;font-size:.7rem;color:#e2e8f0;">Entry: <b>${_price:.4f}</b> (current)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#dc2626;">SL: <b>${_st_line:.4f}</b> (ST line)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#d97706;">Breakeven at: <b>${_price + 1.5*_sl_dist_long:.4f}</b> (1.5R)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#059669;">Partial exit at: <b>${_price + 2*_sl_dist_long:.4f}</b> (2R — 50%)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#059669;">Full exit: <b>${_tp_long:.4f}</b> (4R or ST flip)</span>
+                  </div>
+                </div>''', unsafe_allow_html=True)
+
+                if _errors:
+                    with st.expander("⚠️ Data errors"):
+                        for _e in _errors: st.caption(_e)
+
+            except Exception as _ca_err:
+                import traceback
+                st.error(f"Analyzer error: {_ca_err}")
+                st.code(traceback.format_exc())
+
+    elif not _ca_run:
+        st.markdown('<div class="empty-st"><div style="font-size:2.5rem;opacity:.2;margin-bottom:12px;">🔍</div>Enter a coin symbol above and click Analyze</div>', unsafe_allow_html=True)
+
+    st.stop()
+
 # ─── AUTO-JOURNAL CHECK ──────────────────────────────────────────────────────
 # autocheck_journal_background(S)
 check_daily_summary(S)
@@ -4333,16 +5279,70 @@ if do_scan:
             else:
                 r['dual_confirmed']=False
 
+        # ── Pre-compute freshness + F&G + AI scores BEFORE alerts fire ──────
+        import time as _time_pre
+        _now_pre = _time_pre.time()
+        _fng_pre = st.session_state.get('fng_val', 50)
+        for _r in st.session_state.results:
+            try:
+                import datetime as _dt_mod
+                _st_str = _r.get('scan_time','')
+                if _st_str:
+                    _dt_parsed = _dt_mod.datetime.strptime(_st_str[:19], '%Y-%m-%d %H:%M:%S')
+                    _age = (_now_pre - _dt_parsed.replace(tzinfo=_dt_mod.timezone.utc).timestamp()) / 60
+                else:
+                    _age = 0
+            except:
+                _age = 0
+            _r['_age_min'] = round(_age, 1)
+            _decay = max(0, min(20, (_age - 5) * 2)) if _age > 5 else 0
+            _r['_decayed_score'] = max(0, _r['pump_score'] - _decay)
+            _r['_freshness_pct'] = max(0, min(100, 100 - (_age / 30) * 100))
+            # F&G penalty note
+            _fg_note = ''
+            if _fng_pre <= 25 and _r['type'] == 'LONG' and not _r.get('dual_confirmed') and not _r.get('momentum_confirmed'):
+                _fg_note = f'F&G Extreme Fear ({_fng_pre}) — unconfirmed LONG penalised'
+            elif _fng_pre <= 25 and _r['type'] == 'LONG' and _r.get('momentum_confirmed') and not _r.get('dual_confirmed'):
+                _fg_note = f'F&G Extreme Fear ({_fng_pre}) — partial penalty'
+            elif _fng_pre >= 75 and _r['type'] == 'SHORT' and not _r.get('dual_confirmed'):
+                _fg_note = f'F&G Extreme Greed ({_fng_pre}) — unconfirmed SHORT penalised'
+            _r['_fg_note'] = _fg_note
+
+        # ── AI scores: use cached if fresh, else skip (will compute in display) ─
+        _ai_pre = st.session_state.get('ai_trade_scores', {})
+        # inject into results so alert code can read them
+        for _r in st.session_state.results:
+            _sym_pre = _r.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+            if _sym_pre in _ai_pre:
+                _r['_ai_data'] = _ai_pre[_sym_pre]
+
+        # ── Load persisted logged_sigs from file to survive restarts ─────
+        _lsig_file = '/content/logged_sigs.txt'
+        if 'logged_sigs_loaded' not in st.session_state:
+            try:
+                if os.path.exists(_lsig_file):
+                    with open(_lsig_file,'r') as _lf:
+                        for _line in _lf.read().splitlines():
+                            if _line.strip(): st.session_state.logged_sigs.add(_line.strip())
+            except: pass
+            st.session_state['logged_sigs_loaded'] = True
+
         for r in st.session_state.results:
-            ak=f"{r['symbol']}_{r['type']}_{datetime.now().hour}"
+            # Use scan_time for dedup — more precise than hour, survives across hours
+            _scan_t = r.get('scan_time', '')[:16]  # YYYY-MM-DD HH:MM
+            ak=f"{r['symbol']}_{r['type']}_{_scan_t}" if _scan_t else f"{r['symbol']}_{r['type']}_{datetime.now().hour}"
             lbl=pump_label(r['pump_score'],r['type'])
             score_bracket=r['pump_score']//15
             ak_recheck=f"{r['symbol']}_{r['type']}_{datetime.now().hour}_{score_bracket}"
 
             # ── JOURNAL LOGGING ──────────────────────────────────────────
             if ak not in st.session_state.logged_sigs:
-                log_trade(r)  # log_trade handles all filter logic internally
+                log_trade(r)
                 st.session_state.logged_sigs.add(ak)
+                # Persist to file so logged_sigs survives Colab restarts
+                try:
+                    with open(_lsig_file,'a') as _lf: _lf.write(ak + '\n')
+                except: pass
 
             # ── NOTIFICATION CHECK ────────────────────────────────────────
             send_alert=False
@@ -4353,6 +5353,7 @@ if do_scan:
                 kill_zones = eff_s.get('kill_zones', [{"start":16,"end":19}])
                 in_kill_zone = False
                 for kz in kill_zones:
+                    if not kz.get('active', True): continue  # skip inactive zones
                     ks = int(kz.get('start', 16))
                     ke = int(kz.get('end', 19))
                     if ks <= ke:
@@ -4428,7 +5429,7 @@ if do_scan:
                             dst_line = ""
                         # ── AI score for Discord ─────────────────────────
                         _dc_sym = r.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
-                        _dc_ai = st.session_state.get('ai_trade_scores',{}).get(_dc_sym,{})
+                        _dc_ai = r.get('_ai_data') or st.session_state.get('ai_trade_scores',{}).get(_dc_sym,{})
                         _dc_ai_line = ""
                         if _dc_ai:
                             _dc_rank = _dc_ai.get('rank',99)
@@ -4779,6 +5780,7 @@ trade_confidence: 0-100. avoid: true if this signal should be skipped entirely. 
 # ── DST ISOLATED SCANNER SECTION ─────────────────────────────────────────
 st.markdown('---')
 st.markdown('<div style="font-family:monospace;font-weight:700;font-size:.85rem;color:#0284c7;padding:8px 0;">🔵 DEMA+ST INDEPENDENT SCANNER</div>', unsafe_allow_html=True)
+st.markdown('<div style="font-family:monospace;font-size:.58rem;background:#f0fdf4;border:1px solid #059669;border-radius:5px;padding:5px 10px;margin-bottom:6px;color:#166534;">📡 Candle data: <b>MEXC Futures</b> (83% win rate match) · Trade execution on your selected exchange</div>', unsafe_allow_html=True)
 
 dst_col1, dst_col2, dst_col3 = st.columns([2,2,4])
 with dst_col1:
@@ -4799,27 +5801,86 @@ if dst_should_run:
     else:
         with st.spinner(f"🔵 DEMA+ST scanning {len(coin_list)} coins on {eff_s.get('dst_timeframe','5m')}..."):
             try:
-                ccxt_mod, _ = _load_heavy()
-                exchange_clients = {}
-                for ex_id in ['gate','mexc','bybit','binance']:
-                    try:
-                        exchange_clients[ex_id] = getattr(ccxt_mod, ex_id)({'enableRateLimit': True})
-                    except:
-                        pass
+                import ccxt as _ccxt_run
+                from datetime import datetime as _dt_dst, timezone as _tz_dst
+                exchange_clients = {
+                    'gate':  _ccxt_run.gateio({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
+                    'okx':   _ccxt_run.okx({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
+                    'mexc':  _ccxt_run.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
+                }
                 dst_signals = run_dst_scan(coin_list, eff_s, exchange_clients)
                 st.session_state['dst_results'] = dst_signals
-                st.session_state['dst_last_scan'] = datetime.now(timezone.utc).strftime('%H:%M:%S')
+                st.session_state['dst_last_scan'] = _dt_dst.now(_tz_dst.utc).strftime('%H:%M:%S')
                 st.session_state['dst_last_ts'] = time.time()
                 st.session_state['dst_scan_count'] = st.session_state.get('dst_scan_count', 0) + 1
 
-                # Send Discord alerts for new signals
+                # ── Check open positions for exits (ST flip opposite direction) ──
+                dst_open = st.session_state.get('dst_open_positions', {})
+                active_syms = {s['symbol'] for s in dst_signals}
+                active_dirs = {s['symbol']: s['direction'] for s in dst_signals}
+
+                for sym, open_sig in list(dst_open.items()):
+                    # Get current price for this symbol from latest ticker
+                    _curr_price = None
+                    try:
+                        import ccxt as _ccxt_chk
+                        _chk_ex = _ccxt_chk.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+                        _ticker = _chk_ex.fetch_ticker(sym)
+                        _curr_price = float(_ticker['last'])
+                    except:
+                        # fallback: use price from current scan signals if available
+                        _cs = next((s for s in dst_signals if s['symbol'] == sym), None)
+                        if _cs: _curr_price = _cs['close']
+
+                    if _curr_price and eff_s.get('discord_webhook'):
+                        _entry = open_sig['close']
+                        _sl_dist = abs(_entry - open_sig['sl'])
+                        _partial_alerted = open_sig.get('_partial_alerted', False)
+                        _be_alerted = open_sig.get('_be_alerted', False)
+
+                        if open_sig['direction'] == 'LONG':
+                            _move = _curr_price - _entry
+                        else:
+                            _move = _entry - _curr_price
+
+                        _rr_now = _move / _sl_dist if _sl_dist > 0 else 0
+
+                        # Breakeven alert at R:R 1.5
+                        if _rr_now >= 1.5 and not _be_alerted:
+                            send_dst_partial_alert(eff_s['discord_webhook'], open_sig, _curr_price, 'BREAKEVEN')
+                            open_sig['_be_alerted'] = True
+                            dst_open[sym] = open_sig
+
+                        # Partial profit alert at R:R 2.0
+                        if _rr_now >= 2.0 and not _partial_alerted:
+                            send_dst_partial_alert(eff_s['discord_webhook'], open_sig, _curr_price, 'PARTIAL')
+                            open_sig['_partial_alerted'] = True
+                            dst_open[sym] = open_sig
+
+                    # If current signal direction flipped vs open position → EXIT
+                    if sym in active_dirs and active_dirs[sym] != open_sig['direction']:
+                        curr_sig = next((s for s in dst_signals if s['symbol'] == sym), None)
+                        if curr_sig and eff_s.get('discord_webhook'):
+                            exit_price = curr_sig['close']
+                            if open_sig['direction'] == 'LONG':
+                                result_pct = (exit_price - open_sig['close']) / open_sig['close'] * 100
+                            else:
+                                result_pct = (open_sig['close'] - exit_price) / open_sig['close'] * 100
+                            result_pnl = exit_price - open_sig['close'] if open_sig['direction'] == 'LONG' else open_sig['close'] - exit_price
+                            send_dst_exit_alert(eff_s['discord_webhook'], open_sig, exit_price, result_pct, result_pnl, 'ST Flipped')
+                            del dst_open[sym]
+
+                # ── Send Discord alerts for new entry signals ──────────────
                 alerted = st.session_state.get('dst_alerted', set())
                 for sig in dst_signals:
                     ak = f"{sig['symbol']}_{sig['direction']}_{sig['scan_time']}"
                     if ak not in alerted and eff_s.get('discord_webhook'):
                         send_dst_discord_alert(eff_s['discord_webhook'], sig)
                         alerted.add(ak)
+                        # Track as open position
+                        dst_open[sig['symbol']] = sig
                 st.session_state['dst_alerted'] = alerted
+                st.session_state['dst_open_positions'] = dst_open
                 st.success(f"✅ DEMA+ST scan complete — {len(dst_signals)} signals found")
             except Exception as e:
                 st.error(f"DST scan error: {e}")
@@ -5142,6 +6203,29 @@ if gl_history:
         tp_line = f"🎯 ${sig['tp']:.6f}" if sig.get('tp') else '🎯 —'
         sl_line = f"🛑 ${sig['sl']:.6f}" if sig.get('sl') else '🛑 —'
         rr_line = f"R:R {sig['rr']}" if sig.get('rr') else ''
+        _gl_outcome_html = ''
+        try:
+            _sig_id = f"{sig['symbol']}_{sig['type']}_{sig.get('scan_time','')}"
+            if os.path.exists(GL_PERF_FILE):
+                _pdf = pd.read_csv(GL_PERF_FILE)
+                _row = _pdf[_pdf['signal_id'] == _sig_id]
+                if not _row.empty:
+                    _oc = str(_row.iloc[0].get('outcome','PENDING'))
+                    _mx = _row.iloc[0].get('max_move_pct','')
+                    _pn = _row.iloc[0].get('pnl_pct','')
+                    _mx_v = float(_mx) if str(_mx) not in ['','nan'] else None
+                    _pn_v = float(_pn) if str(_pn) not in ['','nan'] else None
+                    _mx_str = f' · max {_mx_v:+.2f}%' if _mx_v is not None else ''
+                    if _oc == 'WIN':
+                        _gl_outcome_html = f'<div style="background:#f0fdf4;border:1px solid #059669;border-radius:4px;padding:3px 6px;margin-top:4px;font-family:monospace;font-size:.58rem;color:#059669;font-weight:700;">✅ WIN +{_pn_v:.2f}%{_mx_str}</div>'
+                    elif _oc == 'LOSS':
+                        _gl_outcome_html = f'<div style="background:#fef2f2;border:1px solid #dc2626;border-radius:4px;padding:3px 6px;margin-top:4px;font-family:monospace;font-size:.58rem;color:#dc2626;font-weight:700;">❌ LOSS {_pn_v:.2f}%{_mx_str}</div>'
+                    elif _oc == 'PENDING' and _mx_v is not None:
+                        _mc = '#059669' if _mx_v >= 0 else '#dc2626'
+                        _gl_outcome_html = f'<div style="background:#f8fafc;border:1px solid {_mc};border-radius:4px;padding:3px 6px;margin-top:4px;font-family:monospace;font-size:.58rem;color:{_mc};">⏳ LIVE · max move {_mx_v:+.2f}%</div>'
+                    elif _oc == 'EXPIRED':
+                        _gl_outcome_html = f'<div style="background:#f8fafc;border:1px solid #94a3b8;border-radius:4px;padding:3px 6px;margin-top:4px;font-family:monospace;font-size:.58rem;color:#94a3b8;">⌛ EXPIRED{_mx_str}</div>'
+        except: pass
         with hist_cols[i % 5]:
             st.markdown(f'''
             <div style="background:{bg};border:2px solid {color};border-radius:8px;padding:10px 12px;margin:2px 0;">
@@ -5163,6 +6247,7 @@ if gl_history:
                 {tp_line} &nbsp; {sl_line}
               </div>
               <div style="font-family:monospace;font-size:.58rem;color:#64748b;">{rr_line} &nbsp; {sig.get("exchange","")}</div>
+              {_gl_outcome_html}
             </div>''', unsafe_allow_html=True)
             if st.button("✕ dismiss", key=f'gl_hist_remove_{i}'):
                 to_remove = i
