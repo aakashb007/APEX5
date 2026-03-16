@@ -43,78 +43,136 @@ for k,v in _SS_DEFAULTS.items():
 JOURNAL_FILE="trade_journal.csv"; COOLDOWN_FILE="symbol_cooldowns.json"; SETTINGS_FILE="apex_settings.json"; GL_PERF_FILE="gl_performance.csv"
 
 DEFAULT_SETTINGS = {
-    "scan_depth":40,"scan_modes":["mixed"],"fast_tf":"15m","slow_tf":"4h","min_score":10,
-    "j_imminent":True,"j_building":True,"j_early":False,
+    # ── S1: Notification Controls ──
+    "alert_min_score":90,
+    "alert_longs":True,"alert_shorts":True,
+    "alert_squeeze":True,"alert_breakout":True,"alert_early":False,"alert_whale":True,
+    "daily_summary_on":True,"daily_summary_hour":8,
+
+    # ── S2: Journal Logging Filters ──
     "j_filter_classes":["squeeze","breakout","whale_driven","early","god_tier"],
-    "j_min_score":25,"j_require_technicals":[],
-    "req_4h_fvg":False,"req_4h_ob":False,"req_5m_align":False,
+    "j_min_score":90,"j_require_technicals":[],
+    "j_imminent":True,"j_building":True,"j_early":False,
+
+    # ── S3: Risk & Anti-False-Positive ──
+    "late_entry_chg_thresh":3.0,"late_entry_penalty":30,
+    "vol_exhaust_penalty":20,"near_top_penalty":15,"use_4h_ob_for_sl":True,
+
+    # ── S4: Scan Configuration ──
+    "scan_depth":110,"scan_modes":["mixed"],"fast_tf":"5m","slow_tf":"4h",
+
+    # ── S5: Core Filters ──
+    "min_score":90,"min_rr":1.2,"min_reasons":6,
+    "j_imminent":True,"j_building":True,"j_early":False,
+    "btc_filter":True,"require_momentum":True,
+
+    # ── S6: Whale Wall Detection ──
+    "whale_min_usdt":5000000,
+    "pts_whale_near":15,"pts_whale_mid":10,"pts_whale_far":3,
+
+    # ── S7: Order Book / Funding / OI / Volume ──
+    "ob_ratio_low":1.1,"ob_ratio_mid":1.5,"ob_ratio_high":2.5,
+    "pts_ob_low":5,"pts_ob_mid":15,"pts_ob_high":25,
+    "funding_low":0.0002,"funding_mid":0.0005,"funding_high":0.001,
+    "pts_funding_low":5,"pts_funding_mid":15,"pts_funding_high":25,
+    "oi_price_chg_low":0.5,"oi_price_chg_high":2.0,
+    "pts_oi_low":7,"pts_oi_high":18,
+    "vol_surge_low":1.5,"vol_surge_mid":2.0,"vol_surge_high":3.0,
+    "pts_vol_low":3,"pts_vol_mid":8,"pts_vol_high":14,
+
+    # ── S8: Liq / Tech / Sentiment ──
+    "liq_cluster_near":1.5,"liq_cluster_mid":3.0,"liq_cluster_far":5.0,
+    "pts_liq_near":5,"pts_liq_mid":8,"pts_liq_far":4,
+    "rsi_oversold":40,"rsi_overbought":60,
+    "pts_macd":4,"pts_rsi":5,"pts_bb":4,"pts_ema":3,
+    "pts_sentiment":9,"pts_taker":10,
+    "vol24h_low":1000000,"vol24h_mid":10000000,"vol24h_high":50000000,
+    "pts_vol24_low":3,"pts_vol24_mid":6,"pts_vol24_high":12,
+
+    # ── S9: Accuracy + Intelligence ──
+    "min_vol_filter":80000000,"min_active_signals":3,
+    "dedup_symbols":True,
+    "atr_min_pct":0.2,"atr_max_pct":10.0,"spread_max_pct":0.5,
+    "fng_long_threshold":30,"fng_short_threshold":70,
+    "mtf_confirm":True,"pts_mtf":20,
+    "pts_divergence":10,"pts_candle_pattern":8,"pts_oi_funding_combo":10,
+    "vol_surge_explosive":5.0,"pts_vol_explosive":20,
+    "orderflow_lookback":10,"pts_orderflow":12,
+    "pts_liq_map":15,"listing_alert_pts":5,
+    "onchain_whale_min":500000,"pts_onchain_whale":15,
+    "pts_wyckoff":30,"pts_cvd":20,"pts_stophunt":25,
+
+    # ── S10: Sentinel ──
+    "sentinel_score_threshold":90,"sentinel_batch_size":5,"sentinel_check_interval":30,
+
+    # ── S11: Tab Classifier ──
+    "cls_breakout_oi_min":7,"cls_breakout_vol_min":4,"cls_breakout_score_min":25,
+    "cls_squeeze_fund_min":8,"cls_squeeze_ob_min":6,
+
+    # ── S12: Auto-Journal Exit Tracking ──
+    "journal_autocheck_on":True,"journal_autocheck_mins":15,
+
+    # ── S13: Social Media ──
+    "social_enabled":True,"social_reddit_weight":8,"social_min_mentions":3,
+    "social_buzz_threshold":10,"apify_token":"",
+
+    # ── S14: DEMA + SuperTrend ──
+    "dst_enabled":True,"dst_dema_len":200,"dst_st_period":10,"dst_st_mult":3.0,
+    "dst_use_vol":True,"dst_vol_mult":1.2,
+    "dst_use_rsi":False,"dst_rsi_ob":65,"dst_rsi_os":35,
+    "dst_use_mom":False,"dst_mom_bars":3,
+    "dst_use_dema_dist":False,"dst_min_dema_dist":0.1,
+    "dst_fresh_bars":10,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
+    "dst_confirm_boost":8,"dst_conflict_penalty":5,
+    "dst_timeframe":"5m","dst_min_rr":1.5,"dst_min_score":3,
+    "dst_auto_scan":False,"dst_interval":5,
+    "dst_use_trail":False,"dst_trail_atr":2.50,
+    "dst_partial":True,"dst_partial_pct":50,"dst_partial_rr":2.0,
+    "dst_breakeven":True,"dst_be_rr":1.5,
+    "dst_watchlist":["SOL","BTC","ETH"],"dst_use_watchlist":True,
+
+    # ── S15: Professional Filters ──
+    "kill_switch_on":True,
+    "kill_zones":[
+        {"start":16,"end":21,"label":"Late NY / Asia Transition","active":True},
+        {"start":0,"end":4,"label":"Asia Dead Hours","active":False},
+        {"start":12,"end":14,"label":"London Lunch","active":False},
+    ],
+    "req_4h_fvg":True,"req_4h_ob":True,"req_5m_align":False,
     "req_ob":False,"req_whale":False,"req_funding":False,"req_oi":False,
     "req_volume":False,"req_liq":False,"req_technicals":False,"req_session":False,
     "req_momentum":False,"req_mtf":False,"req_sentiment":False,"req_social":False,
     "req_orderflow":False,"req_liq_map":False,"req_onchain":False,
     "req_wyckoff":False,"req_cvd":False,"req_stophunt":False,
-    "req_rel_strength":False,"req_atr_expansion":False,
-    "kill_switch_on":False,
-    "kill_zones":[{"start":16,"end":19,"label":"Late NY / Asia Transition"}],
-    "rs_btc_filter":False,"rs_btc_min":0.0,
+    "rs_btc_filter":True,"rs_btc_min":0.5,
     "atr_expansion_filter":False,"atr_expansion_mult":1.5,
-    "whale_min_usdt":250000,"btc_filter":True,"cooldown_on":True,"cooldown_hrs":4,
-    "auto_scan":False,"auto_interval":5,"alert_min_score":60,
-    "alert_longs":True,"alert_shorts":True,"alert_squeeze":True,
-    "alert_breakout":True,"alert_early":False,"alert_whale":True,
-    "cls_breakout_oi_min":7,"cls_breakout_vol_min":4,"cls_breakout_score_min":25,
-    "cls_squeeze_fund_min":8,"cls_squeeze_ob_min":6,
-    "ob_ratio_low":1.1,"ob_ratio_mid":1.5,"ob_ratio_high":2.5,
-    "funding_low":0.0002,"funding_mid":0.0005,"funding_high":0.001,
-    "oi_price_chg_low":0.5,"oi_price_chg_high":2.0,
-    "vol_surge_low":1.5,"vol_surge_mid":2.0,"vol_surge_high":3.0,
-    "liq_cluster_near":1.5,"liq_cluster_mid":3.0,"liq_cluster_far":5.0,
-    "vol24h_low":1000000,"vol24h_mid":10000000,"vol24h_high":50000000,
-    "rsi_oversold":40,"rsi_overbought":60,"min_reasons":1,"min_rr":1.5,
-    "require_momentum":False,
-    "pts_ob_low":5,"pts_ob_mid":15,"pts_ob_high":25,
-    "pts_funding_low":5,"pts_funding_mid":15,"pts_funding_high":25,
-    "pts_oi_low":7,"pts_oi_high":18,"pts_vol_low":3,"pts_vol_mid":8,"pts_vol_high":14,
-    "pts_liq_near":15,"pts_liq_mid":8,"pts_liq_far":4,
-    "pts_vol24_low":3,"pts_vol24_mid":6,"pts_vol24_high":12,
-    "pts_macd":4,"pts_rsi":5,"pts_bb":4,"pts_ema":3,"pts_session":4,
-    "pts_sentiment":20,"pts_taker":10,
-    "pts_whale_near":25,"pts_whale_mid":15,"pts_whale_far":8,
-    "cmc_key":"","tg_token":"","tg_chat_id":"",
-    "discord_webhook":"https://discord.com/api/webhooks/1476606856599179265/74wKbIJEXNJ9h10Ab0Q9Vp7ZmeJ52XY18CP3lKxg3eR1BbpZSdX65IT8hbZjpEIXSqEg",
-    "okx_key":"","okx_secret":"","okx_passphrase":"","gate_key":"","gate_secret":"",
-    "min_vol_filter":300000,"min_active_signals":3,"spread_max_pct":0.5,
-    "atr_min_pct":0.2,"atr_max_pct":10.0,"mtf_confirm":True,
-    "pts_mtf":12,"pts_divergence":10,"pts_candle_pattern":8,"pts_oi_funding_combo":10,
-    "dedup_symbols":True,"fng_long_threshold":30,"fng_short_threshold":70,
-    "vol_surge_explosive":5.0,"pts_vol_explosive":20,"pts_orderflow":12,
-    "orderflow_lookback":10,"pts_liq_map":15,"listing_alert_pts":25,
-    "onchain_whale_min":500000,"pts_onchain_whale":15,
-    "pts_wyckoff":30,"pts_cvd":20,"pts_stophunt":25,
-    "dst_enabled":True,"dst_dema_len":200,"dst_st_period":10,"dst_st_mult":3.0,
-    "dst_vol_mult":1.2,"dst_rsi_ob":65,"dst_rsi_os":35,"dst_mom_bars":3,
-    "dst_use_vol":True,"dst_use_rsi":False,"dst_use_mom":False,"dst_use_dema_dist":False,
-    "dst_min_dema_dist":0.1,"dst_fresh_bars":10,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
-    "dst_confirm_boost":8,"dst_conflict_penalty":5,
-    "dst_auto_scan":False,"dst_interval":5,"dst_timeframe":"5m","dst_min_rr":1.5,"dst_min_score":3,
-    "gl_enabled":True,"gl_interval":5,"gl_min_gain_pct":3.0,"gl_min_loss_pct":3.0,
-    "gl_pullback_min":1.5,"gl_pullback_max":8.0,"gl_rsi_ob":75,"gl_rsi_os":30,
-    "gl_vol_expansion":1.5,"gl_min_rr":1.5,"gl_top_n":20,
+    "req_rel_strength":False,"req_atr_expansion":False,
+
+    # ── S16: G/L Scanner ──
+    "gl_enabled":True,"gl_interval":1,"gl_top_n":20,
+    "gl_min_gain_pct":3.0,"gl_min_loss_pct":1.5,
+    "gl_pullback_min":1.5,"gl_pullback_max":8.0,
+    "gl_min_rr":1.5,"gl_vol_expansion":1.5,
+    "gl_rsi_ob":75,"gl_rsi_os":30,
     "gl_alert_pullback":True,"gl_alert_breakout":True,
     "gl_alert_bounce":True,"gl_alert_breakdown":True,
     "gl_alert_pregainer":True,"gl_alert_preloser":True,
-    "symbol_blacklist":"","ms_refresh_interval":5,"groq_key":"",
-    "dst_watchlist":[],"dst_use_watchlist":False,
-    "dst_use_trail":False,"dst_trail_atr":2.5,"dst_partial":True,
-    "dst_partial_pct":50,"dst_partial_rr":2.0,"dst_breakeven":True,"dst_be_rr":1.5,
-    "journal_autocheck_on":True,"journal_autocheck_mins":15,
-    "late_entry_chg_thresh":8.0,"late_entry_penalty":20,"vol_exhaust_penalty":15,
-    "near_top_penalty":15,"use_4h_ob_for_sl":True,
-    "sentinel_score_threshold":70,"sentinel_batch_size":5,"sentinel_check_interval":30,
-    "daily_summary_hour":8,"daily_summary_on":True,
-    "social_enabled":True,"social_reddit_weight":8,"social_min_mentions":3,
-    "social_buzz_threshold":10,"apify_token":"",
+    "symbol_blacklist":"","ms_refresh_interval":5,
+
+    # ── S17: Backtest ──
     "backtest_min_score":50,"backtest_days":30,
+
+    # ── S18: API Keys ──
+    "tg_token":"","tg_chat_id":"",
+    "discord_webhook":"https://discord.com/api/webhooks/1476606856599179265/74wKbIJEXNJ9h10Ab0Q9Vp7ZmeJ52XY18CP3lKxg3eR1BbpZSdX65IT8hbZjpEIXSqEg",
+    "groq_key":"","cmc_key":"",
+    "okx_key":"","okx_secret":"","okx_passphrase":"",
+    "gate_key":"","gate_secret":"",
+
+    # ── Misc ──
+    "auto_scan":False,"auto_interval":5,
+    "cooldown_on":True,"cooldown_hrs":4,
+    "pts_session":4,
 }
 
 def load_settings():
@@ -906,6 +964,8 @@ section[data-testid="stFileUploader"]{
 .scanner-section-label{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;}
 .scanner-section-label::before{content:'';display:inline-block;width:3px;height:14px;background:#2563eb;border-radius:2px;}
 
+/* Hide sidebar collapse button */
+button[data-testid="collapsedControl"],[data-testid="collapsedControl"]{display:none!important;}
 </style>""", unsafe_allow_html=True)
 
 
@@ -6174,11 +6234,22 @@ with dst_col3:
 dst_last_ts = st.session_state.get('dst_last_ts', 0)
 dst_should_run = dst_run or (time.time() - dst_last_ts >= dst_interval * 60)
 
+# Default watchlist for DEMA when APEX hasn't run yet
+_DST_DEFAULT_COINS = [
+    'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','BNB/USDT:USDT',
+    'XRP/USDT:USDT','DOGE/USDT:USDT','ADA/USDT:USDT','AVAX/USDT:USDT',
+    'LINK/USDT:USDT','DOT/USDT:USDT','MATIC/USDT:USDT','UNI/USDT:USDT',
+    'ATOM/USDT:USDT','LTC/USDT:USDT','BCH/USDT:USDT','ARB/USDT:USDT',
+    'OP/USDT:USDT','NEAR/USDT:USDT','APT/USDT:USDT','SUI/USDT:USDT',
+    'HYPE/USDT:USDT','WIF/USDT:USDT','PEPE/USDT:USDT','INJ/USDT:USDT',
+]
+
 if dst_should_run:
     coin_list = st.session_state.get('last_coin_list', [])
     if not coin_list:
-        st.warning("⚠️ Run an APEX scan first so DEMA+ST has a coin list to work with.")
-    else:
+        coin_list = _DST_DEFAULT_COINS
+        st.info(f"ℹ️ Using default watchlist ({len(coin_list)} coins). Run APEX scan for a dynamic list.")
+    if coin_list:
         with st.spinner(f"🔵 DEMA+ST scanning {len(coin_list)} coins on {eff_s.get('dst_timeframe','5m')}..."):
             try:
                 import ccxt as _ccxt_run
