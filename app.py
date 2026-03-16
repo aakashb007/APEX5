@@ -1030,7 +1030,7 @@ def _gl_check_gainer_pullback(df_5m, df_4h, s, symbol):
         volma = float(vol_ma.iloc[-1])
         if volma <= 0: return None
         vol_ratio = vol_now / volma
-        if vol_ratio < float(s.get('gl_vol_expansion', 1.3)): return None
+        if vol_ratio < float(s.get('gl_vol_expansion', 1.5)): return None
         vol_declining = float(v.iloc[-3:].mean()) < float(v.iloc[-8:-3].mean())
         if not vol_declining: return None
 
@@ -3533,7 +3533,7 @@ if nav=="⚙️ Settings":
             st.markdown('<div class="setting-help">Minimum retracement after initial pump. ⬇️ Lower = enter earlier in pullback (riskier). ⬆️ Higher = wait for deeper pullback (safer entry, fewer signals).</div>', unsafe_allow_html=True)
             ns_gl_pb_max      = st.number_input("Max pullback %", 3.0, 20.0, float(S.get('gl_pullback_max', 8.0)), 0.5, format="%.1f")
             st.markdown('<div class="setting-help">Maximum allowed pullback. ⬆️ Higher = allows deeper retracements. If pullback exceeds this the trend may be reversing — not a pullback anymore.</div>', unsafe_allow_html=True)
-            ns_gl_vol_exp     = st.number_input("Vol expansion ×", 0.1, 5.0, float(S.get('gl_vol_expansion', 0.3)), 0.1, format="%.1f")
+            ns_gl_vol_exp     = st.number_input("Vol expansion ×", 0.1, 5.0, float(S.get('gl_vol_expansion', 1.5)), 0.1, format="%.1f")
             st.markdown('<div class="setting-help">Minimum volume vs 20-bar average. ⬇️ Lower = more signals in quiet markets. ⬆️ Higher = only high conviction volume spikes. Recommended: 0.3–1.3.</div>', unsafe_allow_html=True)
             ns_gl_rsi_ob      = st.slider("RSI overbought", 60, 85, int(S.get('gl_rsi_ob', 75)))
             st.markdown('<div class="setting-help">RSI ceiling for gainer signals. ⬆️ Higher = allows more extended coins. ⬇️ Lower = stricter, avoids overbought entries.</div>', unsafe_allow_html=True)
