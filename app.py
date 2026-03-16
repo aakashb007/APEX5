@@ -606,67 +606,308 @@ def send_discord(webhook_url,embed_dict):
         if r.status_code not in (200,204): st.toast(f"⚠️ Discord failed: {r.status_code}",icon="⚠️")
     except Exception as e: st.toast(f"⚠️ Discord error: {e}",icon="⚠️")
 
-# ─── CSS (condensed) ──────────────────────────────────────────────────────────
+# ─── CSS ────────────────────────────────────────────────────────────────────
 st.markdown("""<style>
-:root{--bg:#f7f8fc;--surface:#ffffff;--panel:#f0f2f8;--border:#e2e5f0;--border2:#c8cde0;
---text:#0f1117;--text2:#3d4461;--muted:#7a82a0;--green:#059669;--green-bg:#ecfdf5;
---green-bd:#a7f3d0;--red:#dc2626;--red-bg:#fef2f2;--red-bd:#fecaca;--amber:#d97706;
---amber-bg:#fffbeb;--amber-bd:#fde68a;--blue:#2563eb;--blue-bg:#eff6ff;--blue-bd:#bfdbfe;
---purple:#7c3aed;--purple-bg:#f5f3ff;--purple-bd:#ddd6fe;
---sh:0 1px 4px rgba(15,17,23,.06),0 4px 16px rgba(15,17,23,.04);
---sh-lg:0 8px 32px rgba(15,17,23,.10),0 2px 8px rgba(15,17,23,.06);}
-*,*::before,*::after{box-sizing:border-box;}
-html,body,.stApp{background:var(--bg)!important;font-family:sans-serif!important;color:var(--text)!important;}
-#MainMenu,footer,.stDeployButton{display:none!important;}
-header{background-color:transparent!important;}
-section[data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important;}
-section[data-testid="stSidebar"] *{color:var(--text)!important;}
-section[data-testid="stSidebar"] .stMarkdown h3{font-family:monospace!important;font-size:0.58rem!important;letter-spacing:.15em!important;color:var(--muted)!important;text-transform:uppercase!important;border-bottom:1px solid var(--border)!important;padding-bottom:5px!important;margin-bottom:10px!important;}
-div.stButton>button:first-child{background:var(--text)!important;color:#fff!important;font-family:monospace!important;font-size:0.72rem!important;font-weight:600!important;letter-spacing:.1em!important;text-transform:uppercase!important;border:none!important;border-radius:6px!important;padding:13px 24px!important;transition:all .18s ease!important;}
-div.stButton>button:first-child:hover{background:var(--blue)!important;transform:translateY(-1px)!important;box-shadow:0 4px 16px rgba(37,99,235,.28)!important;}
-div[data-testid="metric-container"]{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:8px!important;padding:12px!important;}
-div[data-testid="metric-container"] label{font-family:monospace!important;font-size:.55rem!important;letter-spacing:.1em!important;text-transform:uppercase!important;color:var(--muted)!important;}
-div[data-testid="metric-container"] div[data-testid="metric-value"]{font-family:monospace!important;font-size:1rem!important;font-weight:600!important;color:var(--text)!important;}
-.stTabs [data-baseweb="tab-list"]{background:transparent!important;border-bottom:2px solid var(--border)!important;gap:0!important;}
-.stTabs [data-baseweb="tab"]{font-family:monospace!important;font-size:.65rem!important;letter-spacing:.08em!important;font-weight:600!important;color:var(--muted)!important;padding:11px 20px!important;border-bottom:2px solid transparent!important;text-transform:uppercase!important;}
-.stTabs [aria-selected="true"]{color:var(--text)!important;border-bottom:2px solid var(--text)!important;background:transparent!important;}
-.stProgress>div>div{background:var(--text)!important;}
-::-webkit-scrollbar{width:4px;height:4px;}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
-.ticker-bar{background:#0f1117;color:#fff;border-radius:8px;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px;font-family:monospace;font-size:.68rem;}
-.t-lbl{color:rgba(255,255,255,.38);font-size:.54rem;letter-spacing:.1em;text-transform:uppercase;}
-.t-val{color:#fff;font-weight:600;}
-.pump-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:10px;transition:box-shadow .18s,border-color .18s;position:relative;overflow:hidden;}
-.pump-card:hover{box-shadow:var(--sh-lg);border-color:var(--border2);}
-.pump-card::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;border-radius:10px 0 0 10px;}
-.pc-long::before{background:var(--green);}.pc-short::before{background:var(--red);}
-.score-ring{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:.95rem;font-weight:700;border:3px solid;flex-shrink:0;}
-.px-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0;}
-.px-cell{background:var(--panel);border-radius:6px;padding:8px 10px;text-align:center;}
-.px-lbl{font-family:monospace;font-size:.52rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
-.px-val{font-family:monospace;font-size:.8rem;font-weight:600;color:var(--text);}
-.sig-pips{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;}
-.pip-item{display:flex;align-items:center;gap:5px;font-family:monospace;font-size:.6rem;color:var(--muted);}
-.pip{width:7px;height:7px;border-radius:2px;}.pip-on{background:var(--text);}.pip-half{background:var(--border2);}.pip-off{background:var(--panel);border:1px solid var(--border);}
-.reasons-list .r{font-size:.74rem;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border);}
-.tab-desc{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:var(--text2);line-height:1.5;}
-.stat-strip{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
-.ss-val{font-family:monospace;font-size:1.3rem;font-weight:700;color:var(--text);line-height:1;}
-.ss-lbl{font-family:monospace;font-size:.52rem;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-top:3px;}
-.empty-st{text-align:center;padding:50px 20px;color:var(--muted);font-family:monospace;font-size:.68rem;letter-spacing:.1em;}
-.section-h{font-family:monospace;font-size:.58rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
-.stg-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px;}
-.stg-title{font-family:monospace;font-size:.62rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--text);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border);}
-.hint{font-size:.72rem;color:var(--muted);line-height:1.4;margin-top:2px;padding:6px 10px;background:var(--panel);border-radius:5px;border-left:3px solid var(--border2);}
-.hint b{color:var(--text2);}
-.setting-help{font-size:.65rem;color:#7c3aed;background:#f5f3ff;border-left:3px solid #7c3aed;padding:4px 8px;border-radius:4px;margin-top:3px;line-height:1.4;}
-.sentiment-bar{display:flex;align-items:center;gap:10px;margin:8px 0;padding:8px 12px;background:var(--panel);border-radius:6px;font-family:monospace;font-size:.62rem;}
-.sbar-label{color:var(--muted);width:90px;flex-shrink:0;}
-.sbar-track{flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden;position:relative;}
-.sbar-fill{height:100%;border-radius:4px;transition:width .3s;}
-.sbar-val{color:var(--text);font-weight:600;width:40px;text-align:right;}
-.momentum-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:.58rem;font-weight:700;letter-spacing:.06em;}
-.dual-confirm{background:linear-gradient(135deg,#ff6b0015,#dc262615);border:2px solid #dc2626;border-radius:8px;padding:6px 14px;font-family:monospace;font-size:.7rem;font-weight:700;color:#dc2626;margin:6px 0;text-align:center;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* HIDE ALL DEFAULT STREAMLIT UI */
+#MainMenu,footer,.stDeployButton,header[data-testid="stHeader"]{display:none!important;}
+[data-testid="stDecoration"]{display:none!important;}
+
+/* APP BACKGROUND */
+.stApp,.stApp > div{background:#f0f2f7!important;}
+.main .block-container{
+  padding:0!important;
+  max-width:100%!important;
+  background:transparent!important;
+}
+
+/* HIDE SIDEBAR COMPLETELY — we use our own custom nav */
+section[data-testid="stSidebar"]{
+  background:#ffffff!important;
+  border-right:1px solid #e5e7eb!important;
+  box-shadow:2px 0 10px rgba(0,0,0,.06)!important;
+  min-width:220px!important;
+  max-width:220px!important;
+}
+section[data-testid="stSidebar"] > div:first-child{padding-top:0!important;}
+
+/* SIDEBAR TITLE */
+section[data-testid="stSidebar"] h1{
+  font-family:'Inter',sans-serif!important;
+  font-size:1.15rem!important;font-weight:900!important;
+  color:#0d0f14!important;letter-spacing:-.4px!important;
+  padding:16px 16px 0!important;margin:0!important;
+}
+section[data-testid="stSidebar"] .stCaption p{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.58rem!important;color:#9ca3af!important;
+  padding:0 16px!important;margin:0 0 8px!important;
+}
+
+/* NAV RADIO — make it look like proper nav items */
+/* Radio widget — keep functional but visually hidden */
+section[data-testid="stSidebar"] .stRadio{
+  position:absolute!important;
+  opacity:0!important;
+  pointer-events:none!important;
+  height:1px!important;
+  overflow:hidden!important;
+  margin:0!important;
+  padding:0!important;
+}
+
+/* SIDEBAR SECTION HEADERS */
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] .stMarkdown h3{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.58rem!important;font-weight:700!important;
+  letter-spacing:.14em!important;text-transform:uppercase!important;
+  color:#9ca3af!important;padding:0 8px!important;
+  border-bottom:1px solid #e5e7eb!important;
+  margin:8px 0 6px!important;padding-bottom:6px!important;
+}
+
+/* SIDEBAR SLIDERS */
+section[data-testid="stSidebar"] .stSlider{padding:0 8px!important;}
+section[data-testid="stSidebar"] .stSlider label p{
+  font-family:'Inter',sans-serif!important;font-size:.78rem!important;
+  font-weight:500!important;color:#374151!important;
+}
+section[data-testid="stSidebar"] [data-baseweb="slider"]{padding:0!important;}
+section[data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"]{
+  background:#2563eb!important;border-color:#2563eb!important;
+  width:14px!important;height:14px!important;
+}
+section[data-testid="stSidebar"] [data-testid="stSliderTrackFill"]{background:#2563eb!important;}
+section[data-testid="stSidebar"] [data-testid="stSliderTickBarMin"],
+section[data-testid="stSidebar"] [data-testid="stSliderTickBarMax"]{
+  font-family:'JetBrains Mono',monospace!important;font-size:.6rem!important;color:#9ca3af!important;
+}
+
+/* SIDEBAR TOGGLES */
+section[data-testid="stSidebar"] .stToggle label p{
+  font-family:'Inter',sans-serif!important;font-size:.78rem!important;color:#374151!important;
+}
+section[data-testid="stSidebar"] [data-testid="stToggle"] [role="switch"]{
+  background:#d1d5db!important;
+}
+section[data-testid="stSidebar"] [data-testid="stToggle"] [role="switch"][aria-checked="true"]{
+  background:#059669!important;
+}
+
+/* SIDEBAR CHECKBOXES */
+section[data-testid="stSidebar"] .stCheckbox label p{
+  font-family:'Inter',sans-serif!important;font-size:.78rem!important;color:#374151!important;
+}
+section[data-testid="stSidebar"] .stCheckbox span[data-testid="stWidgetLabel"]{
+  font-family:'Inter',sans-serif!important;font-size:.78rem!important;color:#374151!important;
+}
+
+/* SIDEBAR NUMBER INPUT */
+section[data-testid="stSidebar"] .stNumberInput input{
+  font-family:'JetBrains Mono',monospace!important;font-size:.75rem!important;
+  background:#f8f9fc!important;border:1px solid #e5e7eb!important;
+  border-radius:7px!important;color:#0d0f14!important;
+}
+section[data-testid="stSidebar"] .stNumberInput button{
+  background:#f8f9fc!important;border-color:#e5e7eb!important;color:#374151!important;
+}
+
+/* SIDEBAR DIVIDER */
+section[data-testid="stSidebar"] hr{border-color:#e5e7eb!important;margin:8px 0!important;}
+
+/* SIDEBAR NAV BUTTONS */
+section[data-testid="stSidebar"] div.stButton > button{
+  background:transparent!important;
+  color:#374151!important;
+  border:none!important;
+  border-radius:8px!important;
+  box-shadow:none!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:.82rem!important;
+  font-weight:500!important;
+  padding:8px 11px!important;
+  text-align:left!important;
+  justify-content:flex-start!important;
+  letter-spacing:0!important;
+  text-transform:none!important;
+  width:100%!important;
+  transition:background .12s!important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover{
+  background:#f0f2f7!important;
+  color:#0d0f14!important;
+  transform:none!important;
+  box-shadow:none!important;
+}
+section[data-testid="stSidebar"] div.stButton > button:active{
+  background:#dbeafe!important;
+  color:#1d4ed8!important;
+}
+
+/* MAIN CONTENT BUTTONS */
+.main div.stButton > button{
+  background:linear-gradient(135deg,#1d4ed8,#2563eb)!important;
+  color:#ffffff!important;font-family:'JetBrains Mono',monospace!important;
+  font-size:.72rem!important;font-weight:700!important;
+  letter-spacing:.1em!important;text-transform:uppercase!important;
+  border:none!important;border-radius:9px!important;
+  padding:11px 22px!important;
+  box-shadow:0 2px 8px rgba(37,99,235,.28)!important;
+  transition:all .18s!important;
+}
+.main div.stButton > button:hover{
+  background:linear-gradient(135deg,#1e40af,#1d4ed8)!important;
+  box-shadow:0 4px 16px rgba(37,99,235,.38)!important;
+  transform:translateY(-1px)!important;
+}
+
+/* DOWNLOAD BUTTON */
+div.stDownloadButton > button{
+  background:#ffffff!important;color:#2563eb!important;
+  border:1.5px solid #93c5fd!important;border-radius:9px!important;
+  box-shadow:none!important;font-family:'JetBrains Mono',monospace!important;
+  font-size:.72rem!important;font-weight:600!important;
+  padding:10px 18px!important;
+}
+div.stDownloadButton > button:hover{
+  background:#dbeafe!important;transform:none!important;
+}
+
+/* FORM SUBMIT */
+div[data-testid="stFormSubmitButton"] > button{
+  background:linear-gradient(135deg,#1d4ed8,#2563eb)!important;
+  color:#fff!important;border-radius:9px!important;
+  box-shadow:0 2px 8px rgba(37,99,235,.25)!important;
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.72rem!important;font-weight:700!important;
+  padding:12px 28px!important;letter-spacing:.08em!important;
+}
+
+/* TABS */
+.stTabs [data-baseweb="tab-list"]{
+  background:transparent!important;
+  border-bottom:2px solid #e5e7eb!important;gap:0!important;
+}
+.stTabs [data-baseweb="tab"]{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.6rem!important;letter-spacing:.1em!important;
+  font-weight:600!important;color:#9ca3af!important;
+  padding:10px 18px!important;
+  border-bottom:2.5px solid transparent!important;
+  text-transform:uppercase!important;background:transparent!important;
+}
+.stTabs [aria-selected="true"]{
+  color:#2563eb!important;border-bottom:2.5px solid #2563eb!important;
+}
+
+/* METRICS */
+div[data-testid="metric-container"]{
+  background:#ffffff!important;border:1px solid #e5e7eb!important;
+  border-radius:12px!important;padding:14px 16px!important;
+  box-shadow:0 1px 3px rgba(0,0,0,.06)!important;
+}
+div[data-testid="metric-container"] label{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.52rem!important;letter-spacing:.12em!important;
+  text-transform:uppercase!important;color:#9ca3af!important;
+}
+div[data-testid="metric-container"] [data-testid="metric-value"]{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:1.1rem!important;font-weight:700!important;color:#0d0f14!important;
+}
+
+/* ALERTS */
+div[data-testid="stAlert"]{
+  border-radius:10px!important;font-family:'JetBrains Mono',monospace!important;
+  font-size:.7rem!important;
+}
+
+/* EXPANDERS */
+div[data-testid="stExpander"]{
+  background:#ffffff!important;border:1px solid #e5e7eb!important;
+  border-radius:12px!important;box-shadow:0 1px 3px rgba(0,0,0,.06)!important;
+}
+div[data-testid="stExpander"] summary p{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.68rem!important;font-weight:600!important;color:#374151!important;
+}
+
+/* TEXT */
+.stMarkdown p{
+  font-family:'Inter',sans-serif!important;
+  font-size:.85rem!important;color:#374151!important;
+}
+.stMarkdown h3{
+  font-family:'JetBrains Mono',monospace!important;
+  font-size:.68rem!important;font-weight:700!important;
+  letter-spacing:.1em!important;text-transform:uppercase!important;color:#2563eb!important;
+}
+
+/* PROGRESS */
+.stProgress > div > div{background:linear-gradient(90deg,#2563eb,#60a5fa)!important;}
+
+/* DIVIDER */
+hr{border-color:#e5e7eb!important;margin:14px 0!important;}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:#f0f2f7;}
+::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:3px;}
+
+/* FILE UPLOADER */
+section[data-testid="stFileUploader"]{
+  background:#ffffff!important;border:1.5px dashed #d1d5db!important;
+  border-radius:10px!important;
+}
+
+/* ══ CUSTOM CLASSES (used in st.markdown) ══ */
+.ticker-bar{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-family:'JetBrains Mono',monospace;font-size:.65rem;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.t-lbl{color:#9ca3af;font-size:.5rem;letter-spacing:.12em;text-transform:uppercase;}
+.t-val{color:#0d0f14;font-weight:600;}
+.pump-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px 18px 14px 22px;margin-bottom:10px;transition:box-shadow .18s,transform .15s;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06),0 2px 10px rgba(0,0,0,.05);}
+.pump-card:hover{box-shadow:0 4px 24px rgba(0,0,0,.11);transform:translateY(-1px);}
+.pump-card::before{content:'';position:absolute;top:0;left:0;width:5px;height:100%;border-radius:14px 0 0 14px;}
+.pc-long::before{background:linear-gradient(180deg,#059669,#86efac);}
+.pc-long{border-left-color:#86efac!important;}
+.pc-short::before{background:linear-gradient(180deg,#dc2626,#fca5a5);}
+.pc-short{border-left-color:#fca5a5!important;}
+.score-ring{width:54px;height:54px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.88rem;font-weight:700;border:2.5px solid;flex-shrink:0;}
+.score-ring.sniper{border-width:3px;box-shadow:0 0 0 3px currentColor,0 0 14px -4px currentColor;}
+.px-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:9px 0;}
+.px-cell{background:#f8f9fc;border:1px solid #e5e7eb;border-radius:9px;padding:8px 10px;}
+.px-lbl{font-family:'JetBrains Mono',monospace;font-size:.49rem;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af;margin-bottom:2px;}
+.px-val{font-family:'JetBrains Mono',monospace;font-size:.78rem;font-weight:700;color:#0d0f14;}
+.sig-pips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;}
+.pip-item{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:.58rem;color:#6b7280;}
+.pip{width:7px;height:7px;border-radius:2px;}
+.pip-on{background:#0d0f14;}.pip-half{background:#d1d5db;}.pip-off{background:transparent;border:1px solid #d1d5db;}
+.reasons-list .r{font-size:.72rem;color:#374151;padding:4px 0;border-bottom:1px solid #f8f9fc;}
+.reasons-list .r:last-child{border:none;}
+.stat-strip{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.ss-val{font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:800;color:#0d0f14;line-height:1;}
+.ss-lbl{font-family:'JetBrains Mono',monospace;font-size:.5rem;letter-spacing:.1em;color:#9ca3af;text-transform:uppercase;margin-top:2px;}
+.empty-st{text-align:center;padding:60px 20px;color:#9ca3af;font-family:'JetBrains Mono',monospace;font-size:.65rem;letter-spacing:.1em;}
+.section-h{font-family:'JetBrains Mono',monospace;font-size:.56rem;letter-spacing:.18em;text-transform:uppercase;color:#9ca3af;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;}
+.stg-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px 20px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.stg-title{font-family:'JetBrains Mono',monospace;font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #e5e7eb;}
+.hint{font-size:.7rem;color:#6b7280;line-height:1.4;margin-top:3px;padding:5px 9px;background:#f8f9fc;border-radius:5px;border-left:3px solid #d1d5db;}
+.hint b{color:#374151;}
+.setting-help{font-size:.62rem;color:#7c3aed;background:#ede9fe;border-left:3px solid #7c3aed;padding:4px 8px;border-radius:4px;margin-top:3px;line-height:1.4;}
+.sentiment-bar{display:flex;align-items:center;gap:10px;margin:5px 0;padding:7px 10px;background:#f8f9fc;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:.6rem;}
+.sbar-label{color:#9ca3af;width:90px;flex-shrink:0;}
+.sbar-track{flex:1;height:5px;background:#e5e7eb;border-radius:3px;overflow:hidden;}
+.sbar-fill{height:100%;border-radius:3px;}
+.sbar-val{color:#374151;font-weight:600;width:40px;text-align:right;}
+.momentum-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;}
+.dual-confirm{background:linear-gradient(135deg,#fee2e2,#fff0);border:1.5px solid #fca5a5;border-radius:9px;padding:7px 14px;font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:#dc2626;margin:6px 0;text-align:center;}
+.tab-desc{background:#f8f9fc;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.75rem;color:#374151;line-height:1.6;}
+.scanner-section-label{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;}
+.scanner-section-label::before{content:'';display:inline-block;width:3px;height:14px;background:#2563eb;border-radius:2px;}
+
 </style>""", unsafe_allow_html=True)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # DEMA + SUPERTREND — indicator helpers
@@ -1030,7 +1271,7 @@ def _gl_check_gainer_pullback(df_5m, df_4h, s, symbol):
         volma = float(vol_ma.iloc[-1])
         if volma <= 0: return None
         vol_ratio = vol_now / volma
-        if vol_ratio < float(s.get('gl_vol_expansion', 1.5)): return None
+        if vol_ratio < float(s.get('gl_vol_expansion', 1.3)): return None
         vol_declining = float(v.iloc[-3:].mean()) < float(v.iloc[-8:-3].mean())
         if not vol_declining: return None
 
@@ -2951,16 +3192,16 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
     <div class="pip-item">{pip(max(0,bd.get('onchain',0)),7,15)} ONCHAIN</div>
     <div class="pip-item">{pip(max(0,bd.get('dst_boost',0)),5,8)} DEMA+ST</div>
   </div>
-  {f'''<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:6px 10px;margin:4px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-    <span style="font-family:monospace;font-size:.55rem;font-weight:700;color:#0284c7;">🔵 DEMA+ST</span>
-    <span style="font-family:monospace;font-size:.55rem;background:{"#dcfce7" if r.get("dst_confirmed") else "#fef2f2"};color:{"#16a34a" if r.get("dst_confirmed") else "#dc2626"};padding:1px 6px;border-radius:3px;">{"✅ CONFIRMED" if r.get("dst_confirmed") else "❌ NO SIGNAL"}</span>
-    <span style="font-family:monospace;font-size:.55rem;color:#64748b;">DIR: {"🟢 " + r["dst_signal"]["direction"] if r.get("dst_signal") else "–"}</span>
-    <span style="font-family:monospace;font-size:.55rem;color:#64748b;">RSI: {str(round(r["dst_signal"]["rsi"],1)) if r.get("dst_signal") else "–"}</span>
-    <span style="font-family:monospace;font-size:.55rem;color:#64748b;">VOL: {str(r["dst_signal"]["vol_ratio"])+"×" if r.get("dst_signal") else "–"}</span>
-    <span style="font-family:monospace;font-size:.55rem;color:#64748b;">ST FLIP: {str(r["dst_signal"]["fresh_bars"])+" bars ago" if r.get("dst_signal") else "–"}</span>
-    <span style="font-family:monospace;font-size:.55rem;color:#64748b;">R:R {str(r["dst_signal"]["rr"]) if r.get("dst_signal") else "–"}</span>
-  </div>''' if r.get("dst_signal") or r.get("dst_confirmed") is not None else
-  '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;margin:4px 0;"><span style="font-family:monospace;font-size:.55rem;color:#94a3b8;">🔵 DEMA+ST — no signal this candle</span></div>'}
+  {f'''<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;margin:4px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+    <span style="font-family:monospace;font-size:.55rem;font-weight:700;color:#2563eb;">🔵 DEMA+ST</span>
+    <span style="font-family:monospace;font-size:.55rem;background:{"#dcfce7" if res.get("dst_confirmed") else "#fef2f2"};color:{"#16a34a" if res.get("dst_confirmed") else "#dc2626"};padding:1px 6px;border-radius:3px;">{"✅ CONFIRMED" if res.get("dst_confirmed") else "❌ NO SIGNAL"}</span>
+    <span style="font-family:monospace;font-size:.55rem;color:#6b7280;">DIR: {"🟢 " + res["dst_signal"]["direction"] if res.get("dst_signal") else "–"}</span>
+    <span style="font-family:monospace;font-size:.55rem;color:#6b7280;">RSI: {str(round(res["dst_signal"]["rsi"],1)) if res.get("dst_signal") else "–"}</span>
+    <span style="font-family:monospace;font-size:.55rem;color:#6b7280;">VOL: {str(res["dst_signal"]["vol_ratio"])+"×" if res.get("dst_signal") else "–"}</span>
+    <span style="font-family:monospace;font-size:.55rem;color:#6b7280;">ST FLIP: {str(res["dst_signal"]["fresh_bars"])+" bars ago" if res.get("dst_signal") else "–"}</span>
+    <span style="font-family:monospace;font-size:.55rem;color:#6b7280;">R:R {str(res["dst_signal"]["rr"]) if res.get("dst_signal") else "–"}</span>
+  </div>''' if res.get("dst_signal") or res.get("dst_confirmed") is not None else
+  '<div style="background:#f8f9fc;border:1px solid #e5e7eb;border-radius:6px;padding:5px 10px;margin:4px 0;"><span style="font-family:monospace;font-size:.55rem;color:#9ca3af;">🔵 DEMA+ST — no signal this candle</span></div>'}
   </div>
   <div style="display:flex;height:5px;border-radius:3px;overflow:hidden;margin:6px 0;background:var(--panel);">
     <div style="width:{bid_pct:.0f}%;background:var(--green);"></div>
@@ -3000,17 +3241,46 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
 
 # ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚡ APEXAI")
-    st.caption("Pump & Dump Intelligence")
-    # FIX: Use session state for nav to prevent journal→scanner glitch
+    # ── Logo ─────────────────────────────────────────────────────────────────
+    st.markdown('''<div style="padding:16px 16px 10px;border-bottom:1px solid #e5e7eb;margin-bottom:6px;">
+      <div style="font-family:Inter,sans-serif;font-size:16px;font-weight:900;color:#0d0f14;letter-spacing:-.4px;">APEX<span style="background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">AI</span></div>
+      <div style="font-family:JetBrains Mono,monospace;font-size:9px;color:#9ca3af;margin-top:2px;">Pump &amp; Dump Intelligence</div>
+    </div>''', unsafe_allow_html=True)
+
+    # ── Nav using st.button ──────────────────────────────────────────────────
     nav_options=["🔥 Scanner","⚙️ Settings","📒 Journal","📊 Backtest","🧠 Catalyst","🔍 Coin Analyzer"]
-    nav=st.radio("Navigation",nav_options,label_visibility="collapsed",
-                 index=nav_options.index(st.session_state.get('nav_state','🔥 Scanner')))
-    if nav!=st.session_state.nav_state:
-        st.session_state.nav_state=nav
-        st.rerun()
-    st.divider()
-    st.subheader("Quick Controls")
+    nav = st.session_state.get('nav_state','🔥 Scanner')
+    st.markdown('<div style="padding:4px 6px;">', unsafe_allow_html=True)
+    for _opt in nav_options:
+        _is_active = _opt == nav
+        if _is_active:
+            st.markdown(
+                f'<div style="background:#dbeafe;border-radius:8px;margin-bottom:2px;">'
+                f'<style>div[data-testid="stButton"][key="nav_{_opt}"] button'
+                f'{{background:#dbeafe!important;color:#1d4ed8!important;font-weight:600!important;}}</style>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        if st.button(_opt, key=f"nav_{_opt}", use_container_width=True):
+            st.session_state.nav_state = _opt
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Highlight active button via JS
+    _active_idx = nav_options.index(nav)
+    st.markdown(f'''<script>
+    (function() {{
+      var btns = window.parent.document.querySelectorAll('section[data-testid="stSidebar"] .stButton button');
+      btns.forEach(function(b, i) {{
+        if (i === {_active_idx}) {{
+          b.style.cssText = "background:#dbeafe!important;color:#1d4ed8!important;font-weight:600!important;border-radius:8px!important;";
+        }}
+      }});
+    }})();
+    </script>''', unsafe_allow_html=True)
+
+    st.markdown('<div style="border-top:1px solid #e5e7eb;margin:8px 0;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:JetBrains Mono,monospace;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9ca3af;padding:0 8px 6px;">Quick Controls</div>', unsafe_allow_html=True)
     q_depth=st.slider("Coins to Scan",10,100,S['scan_depth'],step=10,key="q_depth")
     q_min=st.slider("Min Score",1,100,S['min_score'],key="q_min")
     q_btc=st.toggle("BTC Bear blocks LONGs",S['btc_filter'],key="q_btc")
@@ -3044,7 +3314,18 @@ with st.sidebar:
 
 
 # ─── HEADER / TICKER ─────────────────────────────────────────────────────────
-st.markdown('<div style="padding:18px 0 14px;"><div style="font-family:monospace;font-size:1.5rem;font-weight:700;color:#0f1117;">APEX<span style="background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:900;">AI</span></div><div style="font-family:monospace;font-size:.56rem;font-weight:400;letter-spacing:.16em;color:#7a82a0;text-transform:uppercase;margin-top:2px;">AI-Powered Pump & Dump Intelligence Terminal v3.0 — Dual Confirm + FVG + Catalyst + Backtest</div></div>',unsafe_allow_html=True)
+st.markdown('''<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 20px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+  <div>
+    <div style="font-family:'Inter',sans-serif;font-size:1.4rem;font-weight:900;color:#0d0f14;letter-spacing:-.4px;">APEX<span style="background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">AI</span></div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:.52rem;font-weight:400;letter-spacing:.14em;color:#6b7280;text-transform:uppercase;margin-top:2px;">AI-POWERED PUMP &amp; DUMP INTELLIGENCE TERMINAL v3.0</div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <div style="background:#dbeafe;color:#1e3a8a;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;padding:4px 10px;border-radius:20px;">DUAL CONFIRM</div>
+    <div style="background:#ede9fe;color:#4c1d95;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;padding:4px 10px;border-radius:20px;">FVG</div>
+    <div style="background:#dcfce7;color:#065f46;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;padding:4px 10px;border-radius:20px;">CATALYST</div>
+    <div style="background:#fef3c7;color:#78350f;font-family:'JetBrains Mono',monospace;font-size:.56rem;font-weight:700;padding:4px 10px;border-radius:20px;">BACKTEST</div>
+  </div>
+</div>''',unsafe_allow_html=True)
 
 if time.time()-st.session_state.get('fng_last_fetch',0)>300:
     try:
@@ -3073,50 +3354,66 @@ st.markdown(f"""<div class="ticker-bar">
 # PAGE: SETTINGS
 # ═══════════════════════════════════════════════════════════════════════════
 if nav=="⚙️ Settings":
-    st.markdown('<div class="section-h">Settings — all thresholds and scoring weights</div>',unsafe_allow_html=True)
-
-    # ── Settings Backup / Restore ─────────────────────────────────────────────
     import json as _json_s
-    _bcol1, _bcol2, _bcol3 = st.columns([2, 2, 3])
 
+    # ── Settings Page Header ──────────────────────────────────────────────────
+    st.markdown('''<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px 22px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:1.4rem;font-weight:800;color:#0d0f14;letter-spacing:-.3px;">⚙️ Settings</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:#6b7280;margin-top:3px;">All thresholds, scoring weights, strategies and API keys · 18 sections · scroll to see all</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div style="background:#dbeafe;color:#1e3a8a;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;padding:4px 10px;border-radius:20px;">211 settings loaded</div>
+        </div>
+      </div>
+    </div>''', unsafe_allow_html=True)
+
+    # ── Backup / Restore Row ──────────────────────────────────────────────────
+    st.markdown('''<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.58rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin-bottom:12px;padding-bottom:7px;border-bottom:1px solid #e5e7eb;">💾 Backup & Restore</div>
+      <div style="font-size:.72rem;color:#6b7280;margin-bottom:10px;">Download your settings to a JSON file before closing Colab. Upload to instantly restore everything — no manual re-entry needed.</div>
+    </div>''', unsafe_allow_html=True)
+
+    _bcol1, _bcol2 = st.columns([1, 2])
     with _bcol1:
-        # Download current settings as JSON
-        _current_s = load_settings()
-        _s_json = _json_s.dumps(_current_s, indent=2)
         st.download_button(
-            label="⬇️ Download Settings",
-            data=_s_json,
+            label="⬇️ Download Settings JSON",
+            data=_json_s.dumps(load_settings(), indent=2),
             file_name="apex_settings.json",
             mime="application/json",
             use_container_width=True,
-            help="Download all current settings as a JSON file to back up or transfer"
         )
-
     with _bcol2:
-        # Upload settings JSON
-        _uploaded_s = st.file_uploader(
-            "⬆️ Upload Settings",
-            type=["json"],
-            key="settings_upload",
-            label_visibility="collapsed",
-            help="Upload a previously downloaded apex_settings.json to restore all settings"
-        )
-        if _uploaded_s is not None:
+        _up_c1, _up_c2 = st.columns([3, 1])
+        with _up_c1:
+            _uploaded_s = st.file_uploader(
+                "Upload apex_settings.json",
+                type=["json"],
+                key="settings_upload",
+                label_visibility="collapsed",
+            )
+        with _up_c2:
+            _apply_btn = st.button("⬆️ Apply", use_container_width=True, key="apply_settings_btn")
+        if _uploaded_s is not None and _apply_btn:
             try:
                 _loaded = _json_s.loads(_uploaded_s.read().decode('utf-8'))
-                # Merge with defaults so missing keys get defaults
                 _merged = {**DEFAULT_SETTINGS, **_loaded}
                 save_settings(_merged)
-                st.success(f"✅ Settings restored! {len(_loaded)} values loaded.")
-                st.rerun()
+                st.success(f"✅ {len(_loaded)} settings saved!")
+                import os as _os, signal as _sig, time as _t
+                st.info("🔄 Settings saved! Please restart the Streamlit cell in Colab to apply all changes.")
+                _t.sleep(1)
+                _os.kill(_os.getpid(), _sig.SIGTERM)
             except Exception as _ue:
-                st.error(f"❌ Invalid settings file: {_ue}")
-
-    with _bcol3:
-        st.markdown('<div style="font-family:monospace;font-size:.6rem;color:#64748b;padding-top:8px;">💡 Download your settings before closing Colab. Upload to instantly restore everything — no manual changes needed.</div>', unsafe_allow_html=True)
+                st.error(f"❌ Invalid file: {_ue}")
+        elif _uploaded_s is not None and not _apply_btn:
+            st.info("📂 File ready — click ⬆️ Apply to restore")
 
     st.markdown("---")
-    with st.form("settings_form"):
+    # ── If settings were just applied, use them as S for this render ─────────
+    _form_key = f"settings_form_{st.session_state.get('_settings_version', 0)}"
+    with st.form(_form_key):
         # ── ALERTS ────────────────────────────────────────────────────────
         st.markdown('<div class="stg-card"><div class="stg-title">1. 🔔 Notification Controls</div>',unsafe_allow_html=True)
         ac1,ac2,ac3=st.columns(3)
@@ -3139,7 +3436,7 @@ if nav=="⚙️ Settings":
         st.markdown('</div>',unsafe_allow_html=True)
 
         # ── JOURNAL FILTERS (NEW) ─────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#2563eb;"><div class="stg-title" style="color:#2563eb;">2. 📒 Journal Logging Filters — What Gets Saved</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#bfdbfe;"><div class="stg-title" style="color:#1d4ed8;">2. 📒 Journal Logging Filters — What Gets Saved</div>',unsafe_allow_html=True)
         jf1,jf2,jf3=st.columns(3)
         with jf1:
             st.markdown("**Signal Classes to Log:**")
@@ -3159,7 +3456,7 @@ if nav=="⚙️ Settings":
         st.markdown('</div>',unsafe_allow_html=True)
 
         # ── RISK FILTERS ──────────────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#f59e0b;"><div class="stg-title" style="color:#92400e;">3. ⚠️ Risk & Anti-False-Positive Filters</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#fcd34d;"><div class="stg-title" style="color:#d97706;">3. ⚠️ Risk & Anti-False-Positive Filters</div>',unsafe_allow_html=True)
         rf1,rf2,rf3=st.columns(3)
         with rf1:
             ns_late_thresh=st.number_input("Late Entry threshold %",3.0,20.0,float(S.get('late_entry_chg_thresh',8.0)),0.5,format="%.1f")
@@ -3255,7 +3552,7 @@ if nav=="⚙️ Settings":
         st.markdown('</div>',unsafe_allow_html=True)
 
         # ── ACCURACY & INTELLIGENCE ────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#059669;"><div class="stg-title" style="color:#059669;">9. 🎯 Accuracy + Intelligence Signals</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#86efac;"><div class="stg-title" style="color:#059669;">9. 🎯 Accuracy + Intelligence Signals</div>',unsafe_allow_html=True)
         af1,af2,af3=st.columns(3)
         with af1:
             ns_min_vol=st.number_input("Min 24h vol $",0,100000000,int(S.get('min_vol_filter',300000)),100000,format="%d")
@@ -3285,7 +3582,7 @@ if nav=="⚙️ Settings":
         st.markdown('</div>',unsafe_allow_html=True)
 
         # ── SENTINEL ──────────────────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#7c3aed;"><div class="stg-title" style="color:#7c3aed;">10. 🛰️ Sentinel Mode</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#c4b5fd;"><div class="stg-title" style="color:#7c3aed;">10. 🛰️ Sentinel Mode</div>',unsafe_allow_html=True)
         sc1,sc2,sc3=st.columns(3)
         with sc1: ns_sent_score=st.slider("Alert threshold",40,95,int(S.get('sentinel_score_threshold',70)))
         with sc2: ns_sent_batch=st.slider("Coins per batch",2,20,int(S.get('sentinel_batch_size',5)))
@@ -3311,7 +3608,7 @@ if nav=="⚙️ Settings":
         st.markdown('</div>',unsafe_allow_html=True)
 
         # ── AUTO-JOURNAL CHECK ────────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#059669;"><div class="stg-title" style="color:#059669;">12. 📒 Auto-Journal Exit Tracking</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#86efac;"><div class="stg-title" style="color:#059669;">12. 📒 Auto-Journal Exit Tracking</div>',unsafe_allow_html=True)
         aj1,aj2=st.columns(2)
         with aj1:
             ns_aj_on=st.toggle("Enable Auto-Journal Tracking",S.get('journal_autocheck_on',True))
@@ -3332,7 +3629,7 @@ if nav=="⚙️ Settings":
         st.markdown('<div class="setting-help">Reddit Buzz scans social media for coin mentions. Max Reddit pts: maximum score added from social signals. Min mentions: ignore coins mentioned fewer than this many times. Mentions for max pts: how many mentions needed to earn full points. Apify token: required for live Reddit scraping — leave empty to disable.</div>', unsafe_allow_html=True)
         st.markdown('</div>',unsafe_allow_html=True)
         # ── DEMA + SUPERTREND ─────────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#0284c7;"><div class="stg-title" style="color:#0284c7;">14. 🔵 DEMA + SuperTrend Strategy</div>', unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#93c5fd;"><div class="stg-title" style="color:#2563eb;">14. 🔵 DEMA + SuperTrend Strategy</div>', unsafe_allow_html=True)
         st.markdown('<div class="hint">Runs alongside APEX on every scan. When both strategies agree → score boost. When they conflict → small penalty. Disable to skip entirely.</div>', unsafe_allow_html=True)
         dst_c1, dst_c2, dst_c3, dst_c4 = st.columns(4)
         with dst_c1:
@@ -3412,7 +3709,7 @@ if nav=="⚙️ Settings":
 
         st.markdown('</div>', unsafe_allow_html=True)
         # ── PROFESSIONAL FILTERS ──────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#7c3aed;"><div class="stg-title" style="color:#7c3aed;">15. ⚡ Professional Filters</div>', unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#c4b5fd;"><div class="stg-title" style="color:#7c3aed;">15. ⚡ Professional Filters</div>', unsafe_allow_html=True)
         st.markdown('<div class="hint">Advanced filters used by professional traders to eliminate low-quality signals.</div>', unsafe_allow_html=True)
 
         pf_c1, pf_c2, pf_c3 = st.columns(3)
@@ -3503,7 +3800,7 @@ if nav=="⚙️ Settings":
 
         st.markdown('</div>', unsafe_allow_html=True)
         # ── GAINERS & LOSERS ──────────────────────────────────────────────
-        st.markdown('<div class="stg-card" style="border-color:#7c3aed;"><div class="stg-title" style="color:#7c3aed;">16. 📊 Gainers & Losers Scanner</div>', unsafe_allow_html=True)
+        st.markdown('<div class="stg-card" style="border-color:#c4b5fd;"><div class="stg-title" style="color:#7c3aed;">16. 📊 Gainers & Losers Scanner</div>', unsafe_allow_html=True)
         st.markdown('<div class="setting-help">Scans the real top gainers and losers from GATE futures exchange. Runs automatically on startup and every X minutes. Use the button to force a scan anytime.</div>', unsafe_allow_html=True)
         gl_s0a, gl_s0b = st.columns(2)
         with gl_s0a:
@@ -3689,7 +3986,11 @@ if nav=="📒 Journal":
         tps=len(df24[df24['status']=='TP']); sls=len(df24[df24['status']=='SL'])
         active=len(df24[df24['status']=='ACTIVE']); wr=(tps/(tps+sls)*100) if (tps+sls)>0 else 0
         untouched=len(df24[(df24['status']=='ACTIVE') & (df24.get('entry_touched',pd.Series(['0']*len(df24)))!='1')]) if 'entry_touched' in df24.columns else 0
-        st.info(f"**Journal Logging Rules:** Classes: {S.get('j_filter_classes',['all'])} | Min score: {S.get('j_min_score',25)} | Required technicals: {S.get('j_require_technicals',[]) or 'None'} — Change in ⚙️ Settings")
+        _jms = S.get('j_min_score', 25)
+        _jcls = S.get('j_filter_classes', ['all'])
+        _jinfo_col = "var(--red)" if _jms >= 70 else "var(--blue)"
+        _jwarn = f" ⚠️ Min score {_jms} is HIGH — signals below {_jms} won't be logged!" if _jms >= 70 else ""
+        st.info(f"**Journal Logging Rules:** Classes: {_jcls} | Min score: {_jms}{_jwarn} | Required technicals: {S.get('j_require_technicals',[]) or 'None'} — Change in ⚙️ Settings")
         st.markdown(f"""<div class="stat-strip">
           <div><div class="ss-val">{len(df24)}</div><div class="ss-lbl">24h Total</div></div>
           <div><div class="ss-val">{longs}/{shorts}</div><div class="ss-lbl">Long/Short</div></div>
@@ -4438,7 +4739,7 @@ if nav=="📊 Backtest":
                     else:
                         # ── Performance metrics strip ─────────────────────
                         _wr_col = '#059669' if _wr >= 70 else ('#d97706' if _wr >= 50 else '#dc2626')
-                        st.markdown(f'''<div style="display:flex;gap:12px;flex-wrap:wrap;background:#0f1117;border-radius:10px;padding:12px 16px;margin-bottom:12px;border:1px solid #1e293b;">
+                        st.markdown(f'''<div style="display:flex;gap:12px;flex-wrap:wrap;background:#f8f9fc;border-radius:10px;padding:12px 16px;margin-bottom:12px;border:1px solid #1e293b;">
                           <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:{_wr_col};">{_wr}%</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Win Rate</div></div>
                           <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#059669;">{len(_wins)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Wins</div></div>
                           <div style="text-align:center;"><div style="font-family:monospace;font-size:1.4rem;font-weight:900;color:#dc2626;">{len(_losses)}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">Losses</div></div>
@@ -5147,7 +5448,7 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
                 # AI verdict card
                 if _ai_verdict:
                     _ai_col = "#059669" if "ENTER" in _ai_verdict else ("#d97706" if "PULLBACK" in _ai_verdict else "#dc2626")
-                    st.markdown(f'''<div style="background:#0f1117;border:1px solid {_ai_col}44;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
+                    st.markdown(f'''<div style="background:#f8f9fc;border:1px solid {_ai_col}44;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
                       <div style="font-family:monospace;font-size:.6rem;font-weight:700;color:{_ai_col};margin-bottom:8px;">🤖 AI TRADER VERDICT — {_ai_conf}% confidence</div>
                       <div style="font-family:monospace;font-size:.85rem;font-weight:800;color:{_ai_col};margin-bottom:8px;">{_ai_verdict}</div>
                       <div style="font-family:monospace;font-size:.68rem;color:#e2e8f0;margin-bottom:6px;">{_ai_reason}</div>
@@ -5159,22 +5460,22 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
                 _dir_label = "LONG" if _st_dir_now == 1 else "SHORT"
                 _dir_col2 = "#059669" if _st_dir_now == 1 else "#dc2626"
                 st.markdown(f'''<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
-                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                  <div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
                     <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#f1f5f9;">${_price:.4f}</div>
                     <div style="font-family:monospace;font-size:.58rem;color:#64748b;">Current Price</div>
                     <div style="font-family:monospace;font-size:.65rem;color:{"#059669" if _chg24>=0 else "#dc2626"};margin-top:2px;">{_chg24:+.2f}% 24h</div>
                   </div>
-                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                  <div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
                     <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:{_dir_col2};">{_dir_label}</div>
                     <div style="font-family:monospace;font-size:.58rem;color:#64748b;">ST Direction</div>
                     <div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-top:2px;">flip {_bars_since_flip} bars ago</div>
                   </div>
-                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                  <div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
                     <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#dc2626;">${_st_line:.4f}</div>
                     <div style="font-family:monospace;font-size:.58rem;color:#64748b;">SL (ST Line)</div>
                     <div style="font-family:monospace;font-size:.62rem;color:#dc2626;margin-top:2px;">{abs(_price-_st_line)/_price*100:.2f}% away</div>
                   </div>
-                  <div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
+                  <div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center;">
                     <div style="font-family:monospace;font-size:1.1rem;font-weight:800;color:#059669;">${_tp_long:.4f}</div>
                     <div style="font-family:monospace;font-size:.58rem;color:#64748b;">TP (4R target)</div>
                     <div style="font-family:monospace;font-size:.62rem;color:#7c3aed;margin-top:2px;">R:R {_rr}:1</div>
@@ -5191,7 +5492,7 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
                     _rsi_col = "#059669" if 40<_rsi5<60 else ("#d97706" if 60<=_rsi5<70 else "#dc2626")
                     _rsi1h_col = "#059669" if 40<_rsi1h<60 else ("#d97706" if 60<=_rsi1h<70 else "#dc2626")
                     st.markdown(
-                        '<div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
+                        '<div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
                         _ind_row("RSI 5m", f"{_rsi5:.1f}", _rsi_col) +
                         _ind_row("RSI 1h", f"{_rsi1h:.1f}", _rsi1h_col) +
                         _ind_row("DEMA 200", f"${_dema:.4f} ({'ABOVE ✅' if _above_dema else 'BELOW ❌'})", "#059669" if _above_dema else "#dc2626") +
@@ -5208,7 +5509,7 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
                     _fund_col = "#dc2626" if _funding>0.001 else ("#059669" if _funding<-0.001 else "#64748b")
                     _vol_col = "#059669" if _vol_ratio>1.5 else ("#d97706" if _vol_ratio>1.0 else "#dc2626")
                     st.markdown(
-                        '<div style="background:#0f1117;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
+                        '<div style="background:#f8f9fc;border:1px solid #1e293b;border-radius:8px;padding:12px;">' +
                         _ind_row("Volume ratio", f"{_vol_ratio:.2f}× avg", _vol_col) +
                         _ind_row("5-bar momentum", f"{_mom_5bar:+.2f}%", "#059669" if _mom_5bar>0 else "#dc2626") +
                         _ind_row("20-bar momentum", f"{_mom_20bar:+.2f}%", "#059669" if _mom_20bar>0 else "#dc2626") +
@@ -5242,7 +5543,7 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
 
                 # Entry plan
                 st.markdown("---")
-                st.markdown(f'''<div style="background:#0f1117;border:1px solid #7c3aed44;border-radius:10px;padding:16px 20px;">
+                st.markdown(f'''<div style="background:#f8f9fc;border:1px solid #7c3aed44;border-radius:10px;padding:16px 20px;">
                   <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#7c3aed;margin-bottom:10px;">📋 TRADE PLAN (if entering LONG)</div>
                   <div style="display:flex;gap:24px;flex-wrap:wrap;">
                     <span style="font-family:monospace;font-size:.7rem;color:#e2e8f0;">Entry: <b>${_price:.4f}</b> (current)</span>
@@ -5389,28 +5690,38 @@ if do_scan:
         _lsig_file = '/content/logged_sigs.txt'
         if 'logged_sigs_loaded' not in st.session_state:
             try:
+                _today = datetime.now().strftime('%Y-%m-%d')
                 if os.path.exists(_lsig_file):
                     with open(_lsig_file,'r') as _lf:
                         for _line in _lf.read().splitlines():
-                            if _line.strip(): st.session_state.logged_sigs.add(_line.strip())
+                            # Only load TODAY's entries — old entries block new signals
+                            if _line.strip() and _today in _line:
+                                st.session_state.logged_sigs.add(_line.strip())
+                    # Rewrite file keeping only today's entries (prune old days)
+                    try:
+                        with open(_lsig_file,'w') as _lf:
+                            for _sig in st.session_state.logged_sigs:
+                                _lf.write(_sig + '\n')
+                    except: pass
             except: pass
             st.session_state['logged_sigs_loaded'] = True
 
         for r in st.session_state.results:
-            # Use scan_time for dedup — more precise than hour, survives across hours
             _scan_t = r.get('scan_time', '')[:16]  # YYYY-MM-DD HH:MM
+            # Dedup key for ALERTS only — includes score so re-scored signals re-alert
             ak=f"{r['symbol']}_{r['type']}_{_scan_t}" if _scan_t else f"{r['symbol']}_{r['type']}_{datetime.now().hour}"
             lbl=pump_label(r['pump_score'],r['type'])
             score_bracket=r['pump_score']//15
             ak_recheck=f"{r['symbol']}_{r['type']}_{datetime.now().hour}_{score_bracket}"
 
-            # ── JOURNAL LOGGING ──────────────────────────────────────────
-            if ak not in st.session_state.logged_sigs:
+            # ── JOURNAL LOGGING — log every signal, no dedup ─────────────
+            # Unique key per signal: symbol + type + exact timestamp to avoid true duplicates
+            _jkey = f"{r['symbol']}_{r['type']}_{r.get('scan_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
+            if _jkey not in st.session_state.logged_sigs:
                 log_trade(r)
-                st.session_state.logged_sigs.add(ak)
-                # Persist to file so logged_sigs survives Colab restarts
+                st.session_state.logged_sigs.add(_jkey)
                 try:
-                    with open(_lsig_file,'a') as _lf: _lf.write(ak + '\n')
+                    with open(_lsig_file,'a') as _lf: _lf.write(_jkey + '\n')
                 except: pass
 
             # ── NOTIFICATION CHECK ────────────────────────────────────────
@@ -5551,7 +5862,7 @@ if do_scan:
 # ─── SENTINEL RUNNER ─────────────────────────────────────────────────────────
 if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan_count>0 and not _in_kill_zone:
     sent_ph=st.empty()
-    sent_ph.markdown('<div style="background:#0f1117;border-radius:8px;padding:10px 18px;margin-bottom:10px;border:1px solid #7c3aed44;"><span style="color:#7c3aed;font-family:monospace;font-size:.65rem;font-weight:700;">🛰️ SENTINEL — TOP 100 SCANNING…</span></div>',unsafe_allow_html=True)
+    sent_ph.markdown('<div style="background:#f8f9fc;border-radius:8px;padding:10px 18px;margin-bottom:10px;border:1px solid #7c3aed44;"><span style="color:#7c3aed;font-family:monospace;font-size:.65rem;font-weight:700;">🛰️ SENTINEL — TOP 100 SCANNING…</span></div>',unsafe_allow_html=True)
     try:
         try:
             import nest_asyncio as _na
@@ -5653,7 +5964,7 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
         sig_f=st.session_state.get('sentinel_signals_found',0)
         pct_done=int((chk_f%max(1,total_uni))/max(1,total_uni)*100)
         sent_ph.markdown(
-            f'<div style="background:#0f1117;border-radius:8px;padding:10px 18px;margin-bottom:10px;border:1px solid #7c3aed66;">'
+            f'<div style="background:#f8f9fc;border-radius:8px;padding:10px 18px;margin-bottom:10px;border:1px solid #7c3aed66;">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
             f'<span style="color:#7c3aed;font-family:monospace;font-size:.65rem;font-weight:700;">🛰️ SENTINEL LIVE — TOP {total_uni}</span>'
             f'<span style="font-family:monospace;font-size:.6rem;color:#9ca3af;">{chk_f} checked ({pct_done}% cycle)</span>'
@@ -5848,8 +6159,8 @@ trade_confidence: 0-100. avoid: true if this signal should be skipped entirely. 
 
 # ── DST ISOLATED SCANNER SECTION ─────────────────────────────────────────
 st.markdown('---')
-st.markdown('<div style="font-family:monospace;font-weight:700;font-size:.85rem;color:#0284c7;padding:8px 0;">🔵 DEMA+ST INDEPENDENT SCANNER</div>', unsafe_allow_html=True)
-st.markdown('<div style="font-family:monospace;font-size:.58rem;background:#f0fdf4;border:1px solid #059669;border-radius:5px;padding:5px 10px;margin-bottom:6px;color:#166534;">📡 Candle data: <b>MEXC Futures</b> (83% win rate match) · Trade execution on your selected exchange</div>', unsafe_allow_html=True)
+st.markdown('<div class="scanner-section-label">🔵 DEMA+ST INDEPENDENT SCANNER</div>', unsafe_allow_html=True)
+st.markdown('<div style="font-family:monospace;font-size:.58rem;background:var(--green-bg);border:1px solid var(--green-bd);border-radius:5px;padding:5px 10px;margin-bottom:6px;color:var(--green);">📡 Candle data: <b>MEXC Futures</b> (83% win rate match) · Trade execution on your selected exchange</div>', unsafe_allow_html=True)
 
 dst_col1, dst_col2, dst_col3 = st.columns([2,2,4])
 with dst_col1:
@@ -5986,7 +6297,7 @@ else:
     st.markdown('<div style="font-family:monospace;font-size:.65rem;color:#94a3b8;padding:8px 0;">🔵 No DEMA+ST signals yet — click Run DEMA+ST Scan</div>', unsafe_allow_html=True)
 # ── MARKET SENTIMENT DASHBOARD ────────────────────────────────────────────
 st.markdown('---')
-st.markdown('<div style="font-family:monospace;font-weight:700;font-size:.85rem;color:#0284c7;padding:8px 0;">🌍 MARKET PULSE</div>', unsafe_allow_html=True)
+st.markdown('<div class="scanner-section-label">🌍 MARKET PULSE</div>', unsafe_allow_html=True)
 
 _ms_col1, _ms_col2 = st.columns([3,1])
 with _ms_col1:
@@ -6120,7 +6431,7 @@ if _ms:
 
 # ── GAINERS & LOSERS SCANNER SECTION ─────────────────────────────────────
 st.markdown('---')
-st.markdown('<div style="font-family:monospace;font-weight:700;font-size:.85rem;color:#7c3aed;padding:8px 0;">📊 GAINERS & LOSERS SCANNER — 4H Catalyst + 5m Entry</div>', unsafe_allow_html=True)
+st.markdown('<div class="scanner-section-label">📊 GAINERS & LOSERS SCANNER — 4H Catalyst + 5m Entry</div>', unsafe_allow_html=True)
 gl_col1, gl_col2, gl_col3 = st.columns([2,2,4])
 with gl_col1:
     gl_run = st.button("▶ Run G/L Scan", use_container_width=True, key='gl_run_btn')
