@@ -906,6 +906,7 @@ section[data-testid="stFileUploader"]{
 .scanner-section-label{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#2563eb;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;}
 .scanner-section-label::before{content:'';display:inline-block;width:3px;height:14px;background:#2563eb;border-radius:2px;}
 
+button[data-testid="collapsedControl"],[data-testid="collapsedControl"]{display:none!important;}
 </style>""", unsafe_allow_html=True)
 
 
