@@ -5440,6 +5440,7 @@ if nav=="📊 Backtest":
             _t100_coins = [s for s, _ in _t100_sorted]
             _t100_status.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">✅ Got {len(_t100_coins)} coins — starting DEMA backtest...</div>', unsafe_allow_html=True)
 
+            _t100_errors = []
             for _idx, _sym in enumerate(_t100_coins):
                 _pct = int((_idx + 1) / len(_t100_coins) * 100)
                 _t100_progress.progress(_pct)
@@ -5448,7 +5449,9 @@ if nav=="📊 Backtest":
                 try:
                     _lim = 2000 if _t100_tf == '5m' else 1000
                     _raw = _t100_ex.fetch_ohlcv(_sym, _t100_tf, limit=_lim)
-                    if not _raw or len(_raw) < 100: continue
+                    if not _raw or len(_raw) < 100:
+                        _t100_errors.append(f"{_sym}: only {len(_raw) if _raw else 0} candles")
+                        continue
 
                     _df = pd.DataFrame(_raw, columns=['ts','open','high','low','close','volume']).astype(float)
                     _c = _df['close']; _h = _df['high']; _l = _df['low']
@@ -5517,13 +5520,18 @@ if nav=="📊 Backtest":
                         'Avg Bars Held': int(_avg_bars),
                     })
 
-                except: continue
-
+                except Exception as _te:
+                    _t100_errors.append(f"{_sym}: {str(_te)[:80]}")
+                    continue
             _t100_progress.progress(100)
             _t100_status.empty()
 
             if not _t100_results:
-                st.warning("No coins found with enough signals. Lower Min Signals or increase coin count.")
+                st.warning(f"No coins found with enough signals. Lower Min Signals or increase coin count.")
+                if _t100_errors:
+                    st.expander(f"Debug — {len(_t100_errors)} coins had issues").write(_t100_errors[:20])
+                # Show what symbols were tried
+                st.info(f"Tried {len(_t100_coins)} coins. First 5: {[c.replace('/USDT:USDT','') for c in _t100_coins[:5]]}")
             else:
                 _df_t100 = pd.DataFrame(_t100_results).sort_values('Win Rate Raw', ascending=False).drop(columns=['Win Rate Raw'])
                 st.success(f"✅ Scanned {len(_t100_coins)} coins — {len(_df_t100)} had enough signals (≥{_t100_min_sigs})")
