@@ -5447,56 +5447,71 @@ if nav=="📊 Backtest":
                 _t100_status.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">🔵 [{_idx+1}/{len(_t100_coins)}] {_sym.replace("/USDT:USDT","")} | Found: {len(_t100_results)} coins with signals</div>', unsafe_allow_html=True)
 
                 try:
+                    from datetime import datetime as _dt_t100
                     _lim = 2000 if _t100_tf == '5m' else 1000
                     _raw = _t100_ex.fetch_ohlcv(_sym, _t100_tf, limit=_lim)
-                    if not _raw or len(_raw) < 100:
+                    if not _raw or len(_raw) < 250:
                         _t100_errors.append(f"{_sym}: only {len(_raw) if _raw else 0} candles")
                         continue
 
                     _df = pd.DataFrame(_raw, columns=['ts','open','high','low','close','volume']).astype(float)
-                    _c = _df['close']; _h = _df['high']; _l = _df['low']
+                    _c=_df['close']; _h=_df['high']; _l=_df['low']; _v=_df['volume']
 
-                    # Run DEMA+ST
-                    _dema = _dst_dema(_c, 200)
-                    _st_line, _st_dir = _dst_supertrend(_h, _l, _c, 3.0, 10)
+                    # DEMA 200 — exact same as single coin
+                    _e1=_c.ewm(span=200,adjust=False).mean()
+                    _dema_t=2*_e1-_e1.ewm(span=200,adjust=False).mean()
 
-                    # Convert st_dir to clean integer series
-                    _st_int = _st_dir.fillna(0).apply(lambda x: 1 if float(x) > 0 else -1)
+                    # SuperTrend — exact same as single coin
+                    _pc=_c.shift(1)
+                    _tr=pd.concat([_h-_l,(_h-_pc).abs(),(_l-_pc).abs()],axis=1).max(axis=1)
+                    _atr_t=_tr.ewm(alpha=1/10,adjust=False).mean()
+                    _hl2=(_h+_l)/2
+                    _ub=_hl2+3.0*_atr_t; _lb=_hl2-3.0*_atr_t
+                    _upper=_ub.copy(); _lower=_lb.copy()
+                    _dir_t=pd.Series(1.0,index=_c.index); _st_t=_upper.copy()
+                    for _xi in range(1,len(_c)):
+                        _pU=_upper.iloc[_xi-1]; _pL=_lower.iloc[_xi-1]; _pC=_c.iloc[_xi-1]
+                        _upper.iloc[_xi]=_ub.iloc[_xi] if (_ub.iloc[_xi]<_pU or _pC>_pU) else _pU
+                        _lower.iloc[_xi]=_lb.iloc[_xi] if (_lb.iloc[_xi]>_pL or _pC<_pL) else _pL
+                        _pST=_st_t.iloc[_xi-1]; _pU2=_upper.iloc[_xi-1]
+                        _dir_t.iloc[_xi]=(1 if _c.iloc[_xi]>_upper.iloc[_xi] else -1) if _pST==_pU2 else (-1 if _c.iloc[_xi]<_lower.iloc[_xi] else 1)
+                        _st_t.iloc[_xi]=_lower.iloc[_xi] if _dir_t.iloc[_xi]==1 else _upper.iloc[_xi]
 
-                    # Find all ST flips (signals)
-                    _sigs_found = []
-                    for _i in range(51, len(_df)-2):
-                        _cur = int(_st_int.iloc[_i])
-                        _prev = int(_st_int.iloc[_i-1])
-                        if _cur == _prev: continue  # no flip
-                        if _cur == 0 or _prev == 0: continue
+                    _vma_t=_v.rolling(20).mean()
+                    _chg_t=(_dir_t!=_dir_t.shift(1)).reset_index(drop=True)
+                    _dir_arr=_dir_t.reset_index(drop=True)
+                    _last_flip_used=-999
+                    _sigs_found=[]
 
-                        # ST flipped here
-                        _entry = float(_c.iloc[_i])
-                        _sig_dir = 'LONG' if _cur == 1 else 'SHORT'
+                    for _i in range(250,len(_df)):
+                        _cn=float(_c.iloc[_i]); _dn=float(_dema_t.iloc[_i])
+                        _dirn=float(_dir_t.iloc[_i]); _vn=float(_v.iloc[_i]); _vm=float(_vma_t.iloc[_i])
+                        if _vm<=0 or _cn<=0: continue
+                        _vol_ok=_vn>_vm*1.2
+                        _dema_ok=abs(_cn-_dn)/_cn*100>0.3
+                        # Find last flip
+                        _last_flip_idx=-1; _bs=999
+                        for _j in range(1,20):
+                            _ix=_i-_j
+                            if _ix>=0 and bool(_chg_t.iloc[_ix]):
+                                _last_flip_idx=_ix; _bs=_j-1; break
+                        _fresh=_last_flip_idx>=0 and _bs<=3
+                        _long_s=_cn>_dn and _dirn==1 and _vol_ok and _dema_ok and _fresh
+                        _short_s=_cn<_dn and _dirn==-1 and _vol_ok and _dema_ok and _fresh
+                        if (_long_s or _short_s) and _last_flip_idx!=_last_flip_used:
+                            _sigs_found.append({'dir':'LONG' if _long_s else 'SHORT','entry':_cn,'idx':_i,'flip':_last_flip_idx})
+                            _last_flip_used=_last_flip_idx
 
-                        # Find exit: next ST flip or end of data
-                        _exit_price = float(_c.iloc[-1])
-                        _exit_i = len(_df)-1
-                        for _j in range(_i+1, min(_i+500, len(_df)-1)):
-                            if int(_st_int.iloc[_j]) != _cur:
-                                _exit_price = float(_c.iloc[_j])
-                                _exit_i = _j
-                                break
+                    # Calculate outcomes — exit at next ST flip
+                    _sigs_out=[]
+                    for _si,_sg in enumerate(_sigs_found):
+                        _next=_sigs_found[_si+1] if _si+1<len(_sigs_found) else None
+                        _exit=_next['entry'] if _next else float(_c.iloc[-1])
+                        _pnl=(_exit-_sg['entry'])/_sg['entry']*100 if _sg['dir']=='LONG' else (_sg['entry']-_exit)/_sg['entry']*100
+                        _bars=(_next['idx']-_sg['idx']) if _next else (len(_df)-_sg['idx'])
+                        _sigs_out.append({'dir':_sg['dir'],'entry':_sg['entry'],'exit':_exit,'pnl':round(_pnl,2),'bars':_bars,'win':_pnl>0})
 
-                        if _entry <= 0: continue
-                        _pnl = (_exit_price - _entry) / _entry * 100 if _sig_dir == 'LONG' else (_entry - _exit_price) / _entry * 100
-                        _bars_held = _exit_i - _i
-
-                        _sigs_found.append({
-                            'dir': _sig_dir,
-                            'entry': _entry,
-                            'exit': _exit_price,
-                            'pnl': round(_pnl, 2),
-                            'bars': _bars_held,
-                            'win': _pnl > 0
-                        })
-
+                    _sigs_found=_sigs_out
                     if len(_sigs_found) < _t100_min_sigs: continue
 
                     _wins = sum(1 for s in _sigs_found if s['win'])
