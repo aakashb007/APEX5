@@ -21,7 +21,62 @@ def _get_exchange_clients():
         'gate':  _ccxt_sync.gateio({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
         'okx':   _ccxt_sync.okx({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
         'mexc':  _ccxt_sync.mexc({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
+        'binance': _ccxt_sync.binanceusdm({'enableRateLimit':True,'timeout':8000}),
     }
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _binance_available():
+    """Test if Binance is accessible — cached 5 min so we don't re-test every scan."""
+    try:
+        import ccxt as _b
+        _ex = _b.binanceusdm({'enableRateLimit':True,'timeout':5000})
+        _ex.fetch_ticker('BTC/USDT')
+        return True
+    except:
+        return False
+
+def fetch_ohlcv_smart(symbol, timeframe, limit, prefer_exchange='gate'):
+    """
+    Fetch OHLCV data — tries Binance first (best data), falls back to GATE/MEXC.
+    Binance symbol format: BTC/USDT (no :USDT suffix needed for binanceusdm)
+    Gate/MEXC format: BTC/USDT:USDT
+    """
+    import ccxt as _fx
+    # Convert symbol for Binance (remove :USDT suffix)
+    _bnb_sym = symbol.replace(':USDT','').replace(':USD','')
+
+    # Try Binance first
+    if _binance_available():
+        try:
+            _ex = _fx.binanceusdm({'enableRateLimit':True,'timeout':8000})
+            raw = _ex.fetch_ohlcv(_bnb_sym, timeframe, limit=limit)
+            if raw and len(raw) >= limit * 0.8:
+                df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
+                df['_source'] = 'binance'
+                return df
+        except: pass
+
+    # Fallback to GATE
+    try:
+        _ex = _fx.gateio({'enableRateLimit':True,'options':{'defaultType':'swap'}})
+        raw = _ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+        if raw and len(raw) > 10:
+            df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
+            df['_source'] = 'gate'
+            return df
+    except: pass
+
+    # Final fallback to MEXC
+    try:
+        _ex = _fx.mexc({'enableRateLimit':True,'options':{'defaultType':'swap'}})
+        raw = _ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+        if raw and len(raw) > 10:
+            df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
+            df['_source'] = 'mexc'
+            return df
+    except: pass
+
+    return pd.DataFrame()
 
 try:
     import nest_asyncio
@@ -1236,7 +1291,11 @@ def run_dst_scan(coin_list, s, exchange_clients):
             try:
                 import ccxt as _ccxt_dst
                 _mexc_dst = _ccxt_dst.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
-                raw = _mexc_dst.fetch_ohlcv(symbol, tf, limit=(2000 if tf == '5m' else 1000))
+                # Try Binance first for best candle data, fall back to MEXC
+                _df_dst = fetch_ohlcv_smart(symbol, tf, limit=(2000 if tf == '5m' else 1000), prefer_exchange='mexc')
+                raw = _df_dst.values.tolist() if not _df_dst.empty else None
+                if not raw:
+                    raw = _mexc_dst.fetch_ohlcv(symbol, tf, limit=(2000 if tf == '5m' else 1000))
             except:
                 try:
                     import ccxt as _ccxt_dst
@@ -1797,21 +1856,17 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
                 exchange_id = 'gate'
                 if not symbol: continue
 
-                import ccxt as _ccxt
-                ex = _ccxt.gate({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
-
                 checked += 1
                 if status_placeholder and checked % 3 == 0:
                     msg2 = f'🔍 {checked}/{total_coins} — {symbol.replace("/USDT:USDT","")} | signals: {len(results)}'
                     status_placeholder.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#0284c7;">{msg2}</div>', unsafe_allow_html=True)
-                raw_4h = ex.fetch_ohlcv(symbol, '4h', limit=50)
-                raw_5m = ex.fetch_ohlcv(symbol, '5m', limit=250)
 
-                if not raw_4h or len(raw_4h) < 10: continue
-                if not raw_5m or len(raw_5m) < 100: continue
-
-                df_4h = pd.DataFrame(raw_4h, columns=['ts','open','high','low','close','volume']).astype(float)
-                df_5m = pd.DataFrame(raw_5m, columns=['ts','open','high','low','close','volume']).astype(float)
+                df_4h = fetch_ohlcv_smart(symbol, '4h', 50)
+                df_5m = fetch_ohlcv_smart(symbol, '5m', 250)
+                if df_4h.empty or len(df_4h) < 10: continue
+                if df_5m.empty or len(df_5m) < 100: continue
+                df_4h = df_4h.astype(float, errors='ignore')
+                df_5m = df_5m.astype(float, errors='ignore')
 
                 chg_4h = _gl_pct_change(df_4h)
                 chg_1h = _gl_pct_change_1h(df_5m)
@@ -1843,12 +1898,12 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
                 if not symbol: continue
                 import ccxt as _ccxt
                 ex = _ccxt.gate({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
-                raw_4h = ex.fetch_ohlcv(symbol, '4h', limit=50)
-                raw_5m = ex.fetch_ohlcv(symbol, '5m', limit=250)
-                if not raw_4h or len(raw_4h) < 10: continue
-                if not raw_5m or len(raw_5m) < 100: continue
-                df_4h = pd.DataFrame(raw_4h, columns=['ts','open','high','low','close','volume']).astype(float)
-                df_5m = pd.DataFrame(raw_5m, columns=['ts','open','high','low','close','volume']).astype(float)
+                df_4h = fetch_ohlcv_smart(symbol, '4h', 50)
+                df_5m = fetch_ohlcv_smart(symbol, '5m', 250)
+                if df_4h.empty or len(df_4h) < 10: continue
+                if df_5m.empty or len(df_5m) < 100: continue
+                df_4h = df_4h.astype(float, errors='ignore')
+                df_5m = df_5m.astype(float, errors='ignore')
                 chg_4h = _gl_pct_change(df_4h)
                 chg_1h = _gl_pct_change_1h(df_5m)
                 utc_str, pkt_str = _dual_time()
@@ -3549,6 +3604,8 @@ if time.time()-st.session_state.get('fng_last_fetch',0)>300:
 fng_v=st.session_state.fng_val; fng_t=st.session_state.fng_txt
 fng_c="#059669" if fng_v>=60 else ("#dc2626" if fng_v<=40 else "#d97706")
 btc_c="#059669" if st.session_state.btc_trend=="BULLISH" else ("#dc2626" if st.session_state.btc_trend=="BEARISH" else "#7a82a0")
+_data_src = "BINANCE ✓" if _binance_available() else "GATE/MEXC"
+_data_src_c = "#059669" if "BINANCE" in _data_src else "#d97706"
 sn_,_,sc_now=get_session()
 st.markdown(f"""<div class="ticker-bar">
   <div><div class="t-lbl">BTC</div><div class="t-val">${st.session_state.btc_price:,.0f} <span style="color:{btc_c};">{st.session_state.btc_trend}</span></div></div>
@@ -3559,6 +3616,7 @@ st.markdown(f"""<div class="ticker-bar">
   <div><div class="t-lbl">Scans</div><div class="t-val">#{st.session_state.scan_count}</div></div>
   <div><div class="t-lbl">UTC</div><div class="t-val">{datetime.now(timezone.utc).strftime('%H:%M:%S')}</div></div>
   <div><div class="t-lbl">PKT</div><div class="t-val">{(datetime.now(timezone.utc) + __import__('datetime').timedelta(hours=5)).strftime('%H:%M:%S')}</div></div>
+  <div><div class="t-lbl">Data Source</div><div class="t-val" style="color:{_data_src_c};font-weight:700;">{_data_src}</div></div>
 </div>""",unsafe_allow_html=True)
 
 
