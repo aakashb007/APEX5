@@ -13,6 +13,16 @@ def _load_heavy():
 
 ccxt, ta = _load_heavy()
 
+@st.cache_resource(show_spinner=False)
+def _get_exchange_clients():
+    """Cache exchange client objects — recreating them on every rerun adds 10-30 sec."""
+    import ccxt as _ccxt_sync
+    return {
+        'gate':  _ccxt_sync.gateio({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
+        'okx':   _ccxt_sync.okx({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
+        'mexc':  _ccxt_sync.mexc({'enableRateLimit':True,'options':{'defaultType':'swap'}}),
+    }
+
 try:
     import nest_asyncio
     asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
@@ -175,6 +185,7 @@ DEFAULT_SETTINGS = {
     "pts_session":4,
 }
 
+@st.cache_data(ttl=10, show_spinner=False)
 def load_settings():
     s=DEFAULT_SETTINGS.copy()
     if os.path.exists(SETTINGS_FILE):
@@ -185,6 +196,7 @@ def load_settings():
 
 def save_settings(s):
     with open(SETTINGS_FILE,'w',encoding='utf-8') as f: json.dump(s,f,indent=2)
+    load_settings.clear()  # clear cache so next load gets fresh values
 
 S = load_settings()
 
@@ -205,11 +217,16 @@ def _dual_time():
     return utc_str, pkt_str
 
 def ensure_gl_performance():
-    """Create GL performance CSV if not exists."""
+    """Create GL performance CSV if not exists — extended schema with hourly snapshots."""
+    # Hourly snapshot columns: h1_price, h1_pct, h2_price, h2_pct ... h24_price, h24_pct
+    _hourly_cols = []
+    for _h in range(1, 25):
+        _hourly_cols += [f'h{_h}_price', f'h{_h}_pct']
     headers = ['signal_id','timestamp_utc','timestamp_pkt','symbol','type','direction',
                'entry','tp','sl','rr','chg_4h','chg_1h','rsi','vol_ratio',
                'outcome','outcome_time','pnl_pct','bars_to_outcome',
-               'max_move_pct','max_move_price','max_move_time']
+               'max_move_pct','max_move_price','max_move_time',
+               'final_price','final_pct','final_report'] + _hourly_cols
     if not os.path.exists(GL_PERF_FILE):
         with open(GL_PERF_FILE,'w',newline='',encoding='utf-8') as f:
             csv.writer(f).writerow(headers)
@@ -217,7 +234,7 @@ def ensure_gl_performance():
         try:
             _df = pd.read_csv(GL_PERF_FILE)
             changed = False
-            for col in ['max_move_pct','max_move_price','max_move_time']:
+            for col in headers:
                 if col not in _df.columns:
                     _df[col] = ''
                     changed = True
@@ -292,7 +309,7 @@ def check_gl_outcomes():
                 # Track max move
                 try:
                     _prev_max = float(row['max_move_pct']) if str(row.get('max_move_pct','')) not in ['','nan'] else 0.0
-                    if str(row.get('direction','')) == 'LONG' or str(row.get('type','')) in ['PRE_GAINER','GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE']:
+                    if str(row.get('direction','')) == 'LONG' or str(row.get('type','')) in ['PRE_GAINER','PRE_GAINER_STAR','GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE']:
                         _move_pct = (current - entry) / entry * 100
                     else:
                         _move_pct = (entry - current) / entry * 100
@@ -304,25 +321,62 @@ def check_gl_outcomes():
 
                 direction = str(row['direction'])
                 if direction == 'WATCH':
-                    # Pre-signals — check if coin moved 5%+ from entry
+                    # ── PRE-GAINER / PRE-LOSER: Full 24H Hourly Snapshot Tracking ──
                     move_pct = (current - entry) / entry * 100
                     sig_type = str(row['type'])
-                    if sig_type == 'PRE_GAINER' and move_pct >= 5.0:
-                        df.at[idx, 'outcome'] = 'WIN'
-                        df.at[idx, 'pnl_pct'] = round(move_pct, 2)
+                    try:
+                        sig_time = pd.to_datetime(row['timestamp_utc'])
+                        age_hours = (pd.Timestamp.utcnow() - sig_time.replace(tzinfo=None)).total_seconds() / 3600
+                        age_mins  = age_hours * 60
+                    except:
+                        age_hours = 0; age_mins = 0
+
+                    # Always update live move
+                    df.at[idx, 'pnl_pct']       = round(move_pct, 3)
+                    df.at[idx, 'max_move_price'] = round(current, 6)
+                    if abs(move_pct) > abs(float(row.get('max_move_pct') or 0)):
+                        df.at[idx, 'max_move_pct']  = round(move_pct, 3)
+                        df.at[idx, 'max_move_time']  = _dual_time()[0]
+
+                    # Fill hourly snapshot columns h1..h24 as each hour passes
+                    for _h in range(1, 25):
+                        _hcol_p = f'h{_h}_price'
+                        _hcol_c = f'h{_h}_pct'
+                        if _hcol_p in df.columns and _hcol_c in df.columns:
+                            _existing = str(df.at[idx, _hcol_p])
+                            # Fill this hour's snapshot once (when age >= h and not yet filled)
+                            if age_hours >= _h and (_existing == '' or _existing == 'nan'):
+                                df.at[idx, _hcol_p] = round(current, 6)
+                                df.at[idx, _hcol_c] = round(move_pct, 3)
+
+                    # Final report at 24H
+                    if age_hours >= 24:
+                        df.at[idx, 'final_price']  = round(current, 6)
+                        df.at[idx, 'final_pct']    = round(move_pct, 3)
+                        _direction_correct = (sig_type == 'PRE_GAINER' and move_pct > 0) or                                              (sig_type == 'PRE_LOSER'  and move_pct < 0)
+                        df.at[idx, 'outcome']      = 'WIN' if _direction_correct else 'LOSS'
                         df.at[idx, 'outcome_time'] = _dual_time()[0]
-                    elif sig_type == 'PRE_LOSER' and move_pct <= -5.0:
-                        df.at[idx, 'outcome'] = 'WIN'
-                        df.at[idx, 'pnl_pct'] = round(abs(move_pct), 2)
-                        df.at[idx, 'outcome_time'] = _dual_time()[0]
-                    elif sig_type == 'PRE_GAINER' and move_pct <= -5.0:
-                        df.at[idx, 'outcome'] = 'LOSS'
-                        df.at[idx, 'pnl_pct'] = round(move_pct, 2)
-                        df.at[idx, 'outcome_time'] = _dual_time()[0]
-                    elif sig_type == 'PRE_LOSER' and move_pct >= 5.0:
-                        df.at[idx, 'outcome'] = 'LOSS'
-                        df.at[idx, 'pnl_pct'] = round(-move_pct, 2)
-                        df.at[idx, 'outcome_time'] = _dual_time()[0]
+                        # Build summary: peak hour
+                        _h_pcts = []
+                        for _h in range(1, 25):
+                            try: _h_pcts.append((f'H{_h}', float(df.at[idx, f'h{_h}_pct'] or 0)))
+                            except: pass
+                        _peak = max(_h_pcts, key=lambda x: abs(x[1]), default=('–',0))
+                        df.at[idx, 'final_report'] = (
+                            f"24H FINAL | Entry:{entry:.4f} → Now:{current:.4f} | "
+                            f"Move:{move_pct:+.2f}% | Peak:{_peak[0]} {_peak[1]:+.2f}% | "
+                            f"{'✅ CORRECT' if _direction_correct else '❌ WRONG'} direction"
+                        )
+                    elif age_hours >= 1:
+                        # Live status with hours remaining
+                        hrs_done = int(age_hours)
+                        hrs_left = 24 - hrs_done
+                        df.at[idx, 'outcome_note'] = (
+                            f"H{hrs_done} live: {move_pct:+.2f}% | {hrs_left}h remaining to final report"
+                        )
+                    else:
+                        mins_left = int(60 - age_mins)
+                        df.at[idx, 'outcome_note'] = f"First hour | {move_pct:+.2f}% | H1 snapshot in {mins_left}m"
                 elif direction == 'LONG':
                     if current >= tp:
                         pnl = (tp - entry) / entry * 100
@@ -357,7 +411,7 @@ def get_gl_stats():
         if not os.path.exists(GL_PERF_FILE): return {}
         df = pd.read_csv(GL_PERF_FILE)
         stats = {}
-        for sig_type in ['GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE','LOSER_BREAKDOWN','PRE_GAINER','PRE_LOSER']:
+        for sig_type in ['GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE','LOSER_BREAKDOWN','PRE_GAINER','PRE_LOSER','PRE_GAINER_STAR','PRE_LOSER_STAR']:
             subset = df[df['type'] == sig_type]
             wins   = len(subset[subset['outcome'] == 'WIN'])
             losses = len(subset[subset['outcome'] == 'LOSS'])
@@ -1564,6 +1618,100 @@ def _gl_check_preloser(df_5m, df_4h, s, symbol):
         }
     except: return None
 
+def _gl_check_pregainer_star(df_5m, df_4h, s, symbol):
+    """⭐ Pre-Gainer STAR — all existing conditions + 5 extra strict filters."""
+    try:
+        # ── Must pass all base pre-gainer conditions first ──
+        base = _gl_check_pregainer(df_5m, df_4h, s, symbol)
+        if not base: return None
+
+        c = df_5m['close']; h = df_5m['high']; l = df_5m['low']
+        v = df_5m['volume']
+        close_now = float(c.iloc[-1])
+        vol_ma = v.rolling(20).mean()
+        volma = float(vol_ma.iloc[-1])
+
+        # ── Extra 1: Volume ratio > 1.5× average (strong accumulation) ──
+        vol_ratio = float(v.iloc[-1]) / volma if volma > 0 else 0
+        if vol_ratio < 1.5: return None
+
+        # ── Extra 2: 4H SuperTrend must also be BULLISH ──
+        h4 = df_4h['high']; l4 = df_4h['low']; c4 = df_4h['close']
+        _, st_dir_4h = _dst_supertrend(h4, l4, c4, 3.0, 10)
+        if float(st_dir_4h.iloc[-1]) != 1: return None
+
+        # ── Extra 3: RSI between 45–65 (not overbought, catching early) ──
+        rsi = _dst_rsi(c)
+        rsi_now = float(rsi.iloc[-1])
+        if not (45 <= rsi_now <= 65): return None
+
+        # ── Extra 4: Price above 4H EMA20 ──
+        ema20_4h = df_4h['close'].ewm(span=20, adjust=False).mean()
+        if close_now < float(ema20_4h.iloc[-1]): return None
+
+        # ── Extra 5: 24H volume > $5M ──
+        vol24 = float(v.tail(288).sum()) * close_now  # 288 × 5m = 24h
+        if vol24 < 5_000_000: return None
+
+        return {
+            'type': 'PRE_GAINER_STAR', 'direction': 'WATCH', 'symbol': symbol,
+            'close': close_now, 'sl': None, 'tp': None, 'rr': None,
+            'rsi': round(rsi_now, 1),
+            'chg_4h': round(base['chg_4h'], 2),
+            'chg_1h': round(base['chg_1h'], 2),
+            'vol_ratio': round(vol_ratio, 2),
+            'emoji': '⭐', 'label': '⭐ PRE-GAINER STAR'
+        }
+    except: return None
+
+
+def _gl_check_preloser_star(df_5m, df_4h, s, symbol):
+    """⭐ Pre-Loser STAR — all existing conditions + 5 extra strict filters."""
+    try:
+        # ── Must pass all base pre-loser conditions first ──
+        base = _gl_check_preloser(df_5m, df_4h, s, symbol)
+        if not base: return None
+
+        c = df_5m['close']; h = df_5m['high']; l = df_5m['low']
+        v = df_5m['volume']
+        close_now = float(c.iloc[-1])
+        vol_ma = v.rolling(20).mean()
+        volma = float(vol_ma.iloc[-1])
+
+        # ── Extra 1: Volume declining hard (< 0.6× average) ──
+        vol_ratio = float(v.iloc[-1]) / volma if volma > 0 else 1
+        if vol_ratio > 0.6: return None
+
+        # ── Extra 2: 4H SuperTrend must also be BEARISH ──
+        h4 = df_4h['high']; l4 = df_4h['low']; c4 = df_4h['close']
+        _, st_dir_4h = _dst_supertrend(h4, l4, c4, 3.0, 10)
+        if float(st_dir_4h.iloc[-1]) != -1: return None
+
+        # ── Extra 3: RSI between 35–55 (not oversold yet, early weakness) ──
+        rsi = _dst_rsi(c)
+        rsi_now = float(rsi.iloc[-1])
+        if not (35 <= rsi_now <= 55): return None
+
+        # ── Extra 4: Price below 4H EMA20 ──
+        ema20_4h = df_4h['close'].ewm(span=20, adjust=False).mean()
+        if close_now > float(ema20_4h.iloc[-1]): return None
+
+        # ── Extra 5: 24H volume > $5M ──
+        vol24 = float(v.tail(288).sum()) * close_now
+        if vol24 < 5_000_000: return None
+
+        return {
+            'type': 'PRE_LOSER_STAR', 'direction': 'WATCH', 'symbol': symbol,
+            'close': close_now, 'sl': None, 'tp': None, 'rr': None,
+            'rsi': round(rsi_now, 1),
+            'chg_4h': round(base['chg_4h'], 2),
+            'chg_1h': round(base['chg_1h'], 2),
+            'vol_ratio': round(vol_ratio, 2),
+            'emoji': '⭐', 'label': '⭐ PRE-LOSER STAR'
+        }
+    except: return None
+
+
 def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
     """
     Gainers & Losers scanner — fully independent.
@@ -1636,6 +1784,9 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
     pre_checks = []
     if s.get('gl_alert_pregainer', True): pre_checks.append(_gl_check_pregainer)
     if s.get('gl_alert_preloser', True):  pre_checks.append(_gl_check_preloser)
+    # ⭐ Star setups — always run alongside regular pre signals
+    pre_checks.append(_gl_check_pregainer_star)
+    pre_checks.append(_gl_check_preloser_star)
 
     # ── Pass 1: Active signals FIRST — top 20 gainers/losers only ─────
     for pass_coins, pass_checks in [(active_list, active_checks)]:
@@ -1721,7 +1872,8 @@ def send_gl_discord_alert(webhook_url, sig):
         type_colors = {
             'GAINER_PULLBACK': 0x059669, 'GAINER_BREAKOUT': 0x10b981,
             'LOSER_BOUNCE': 0x0284c7, 'LOSER_BREAKDOWN': 0xdc2626,
-            'PRE_GAINER': 0xf59e0b, 'PRE_LOSER': 0xf97316
+            'PRE_GAINER': 0xf59e0b, 'PRE_LOSER': 0xf97316,
+    'PRE_GAINER_STAR': 0xfbbf24, 'PRE_LOSER_STAR': 0xef4444
         }
         color = type_colors.get(sig['type'], 0x6366f1)
         dir_emoji = "📗" if sig['direction'] == 'LONG' else "📕" if sig['direction'] == 'SHORT' else "👁"
@@ -4128,7 +4280,7 @@ if nav=="📒 Journal":
         type_emojis = {
             'GAINER_PULLBACK':'🟢','GAINER_BREAKOUT':'🚀',
             'LOSER_BOUNCE':'🔄','LOSER_BREAKDOWN':'📉',
-            'PRE_GAINER':'👀','PRE_LOSER':'⚠️'
+            'PRE_GAINER':'👀','PRE_LOSER':'⚠️','PRE_GAINER_STAR':'⭐','PRE_LOSER_STAR':'⭐'
         }
         type_cols = st.columns(3)
         col_idx = 0
@@ -4151,20 +4303,272 @@ if nav=="📒 Journal":
         st.markdown("---")
 
         # ── Full signal log table ────────────────────────────────────
+        # ── Pre-Gainer / Pre-Loser 1H Analysis ─────────────────────────
+        pre_df = df_gl[df_gl['type'].isin(['PRE_GAINER','PRE_LOSER'])].copy() if 'type' in df_gl.columns else pd.DataFrame()
+        if not pre_df.empty:
+            # ── Stats header ──────────────────────────────────────────
+            _pre_done = pre_df[pre_df['outcome'].isin(['WIN','LOSS'])]
+            _pre_win  = len(_pre_done[_pre_done['outcome']=='WIN'])
+            _pre_loss = len(_pre_done[_pre_done['outcome']=='LOSS'])
+            _pre_pend = len(pre_df[pre_df['outcome']=='PENDING'])
+            _pre_wr   = (_pre_win/len(_pre_done)*100) if len(_pre_done)>0 else 0
+            _pre_moves = pre_df['pnl_pct'].apply(pd.to_numeric, errors='coerce').dropna()
+            _pre_avg  = _pre_moves.mean() if len(_pre_moves)>0 else 0
+            _pre_best = _pre_moves.max() if len(_pre_moves)>0 else 0
+            _pre_worst= _pre_moves.min() if len(_pre_moves)>0 else 0
+
+            st.markdown(f'''<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px 20px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);">
+              <div style="font-family:JetBrains Mono,monospace;font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#d97706;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #e5e7eb;">
+              ⏱️ Pre-Gainer / Pre-Loser — 1H Price Move Tracker</div>
+              <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px;">
+                <div style="background:#f8f9fc;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:#0d0f14;">{len(pre_df)}</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">Total</div>
+                </div>
+                <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:#059669;">{_pre_win}</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#059669;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">Correct ✅</div>
+                </div>
+                <div style="background:#fee2e2;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:#dc2626;">{_pre_loss}</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#dc2626;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">Wrong ❌</div>
+                </div>
+                <div style="background:#fef3c7;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:#d97706;">{_pre_pend}</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#d97706;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">Pending ⏳</div>
+                </div>
+                <div style="background:#dbeafe;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:#2563eb;">{_pre_wr:.1f}%</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#2563eb;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">1H Win Rate</div>
+                </div>
+                <div style="background:#f8f9fc;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-family:JetBrains Mono,monospace;font-size:1.3rem;font-weight:800;color:{"#059669" if _pre_avg>=0 else "#dc2626"};">{_pre_avg:+.2f}%</div>
+                  <div style="font-family:JetBrains Mono,monospace;font-size:.5rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.1em;margin-top:2px;">Avg Move</div>
+                </div>
+              </div>
+            </div>''', unsafe_allow_html=True)
+
+            # ── Individual signal cards ────────────────────────────────
+            _pre_sorted = pre_df.sort_values('timestamp_utc', ascending=False)
+            for _, _row in _pre_sorted.iterrows():
+                _sym   = str(_row.get('symbol','?')).replace('/USDT:USDT','').replace('/USDT','')
+                _type  = str(_row.get('type',''))
+                _entry = float(_row.get('entry', 0))
+                _cur   = float(_row.get('max_move_price', _entry)) if str(_row.get('max_move_price','')) not in ['','nan'] else _entry
+                _move  = float(_row.get('pnl_pct', 0)) if str(_row.get('pnl_pct','')) not in ['','nan'] else 0
+                _out   = str(_row.get('outcome','PENDING'))
+                _note  = str(_row.get('outcome_note',''))
+                _ts    = str(_row.get('timestamp_utc',''))[:16]
+                _ts_pkt= str(_row.get('timestamp_pkt',''))[:16]
+
+                # Colors
+                if _out == 'WIN':
+                    _bg,_bc,_oc,_ol = '#dcfce7','#86efac','#059669','✅ CORRECT'
+                elif _out == 'LOSS':
+                    _bg,_bc,_oc,_ol = '#fee2e2','#fca5a5','#dc2626','❌ WRONG'
+                else:
+                    _bg,_bc,_oc,_ol = '#fef3c7','#fcd34d','#d97706','⏳ PENDING'
+
+                _move_col = '#059669' if _move >= 0 else '#dc2626'
+                _move_arrow = '▲' if _move >= 0 else '▼'
+                _type_label = '👀 Pre-Gainer' if _type == 'PRE_GAINER' else '⚠️ Pre-Loser'
+
+                # Price percentage calculation — clear display
+                if _entry > 0 and _cur > 0:
+                    _pct_display = ((_cur - _entry) / _entry) * 100
+                    _price_journey = f"{_entry:.6f} → {_cur:.6f}"
+                else:
+                    _pct_display = _move
+                    _price_journey = f"Entry: {_entry:.6f}"
+
+                st.markdown(f'''<div style="background:{_bg};border:1.5px solid {_bc};border-radius:12px;padding:13px 16px;margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                  <div style="min-width:120px;">
+                    <div style="font-family:JetBrains Mono,monospace;font-size:1rem;font-weight:800;color:#0d0f14;">{_sym}</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.58rem;color:#6b7280;margin-top:2px;">{_type_label}</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.55rem;color:#9ca3af;margin-top:1px;">{_ts} UTC</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.55rem;color:#9ca3af;">{_ts_pkt} PKT</div>
+                  </div>
+                  <div style="flex:1;min-width:200px;">
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.65rem;color:#6b7280;margin-bottom:3px;">Price Journey (1H)</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.9rem;font-weight:700;color:#374151;">{_price_journey}</div>
+                  </div>
+                  <div style="text-align:center;min-width:100px;">
+                    <div style="font-family:JetBrains Mono,monospace;font-size:1.6rem;font-weight:900;color:{_move_col};">{_move_arrow} {abs(_pct_display):.2f}%</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.55rem;color:#6b7280;margin-top:2px;">1H Move</div>
+                  </div>
+                  <div style="text-align:center;min-width:100px;">
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.9rem;font-weight:800;color:{_oc};">{_ol}</div>
+                    <div style="font-family:JetBrains Mono,monospace;font-size:.55rem;color:#9ca3af;margin-top:3px;">{_note.split("|")[1].strip() if "|" in _note else _note[:40]}</div>
+                  </div>
+                </div>''', unsafe_allow_html=True)
+
         st.markdown('<div style="font-family:monospace;font-size:.75rem;font-weight:700;color:#64748b;padding:4px 0;">All Signals Log</div>', unsafe_allow_html=True)
-        display_cols = ['timestamp_utc','timestamp_pkt','symbol','type','direction','entry','tp','sl','rr','chg_4h','rsi','outcome','pnl_pct','outcome_time']
+        display_cols = ['timestamp_utc','timestamp_pkt','symbol','type','direction','entry','tp','sl','rr','chg_4h','rsi','outcome','pnl_pct','outcome_note','outcome_time']
         df_show = df_gl[[c for c in display_cols if c in df_gl.columns]].copy()
         df_show = df_show.sort_values('timestamp_utc', ascending=False)
 
         def color_outcome(val):
             if val == 'WIN': return 'color: #059669; font-weight:700'
             if val == 'LOSS': return 'color: #dc2626; font-weight:700'
-            if val == 'PENDING': return 'color: #f59e0b'
+            if val == 'PENDING': return 'color: #d97706'
             return 'color: #94a3b8'
 
         st.dataframe(
             df_show.style.applymap(color_outcome, subset=['outcome']),
             use_container_width=True, height=400)
+
+    # ══════════════════════════════════════════════════════════════════
+    # PRE-GAINER / PRE-LOSER — 24H HOURLY ANALYSIS DASHBOARD
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown('---')
+    st.markdown('<div class="scanner-section-label">🔭 PRE-GAINER / PRE-LOSER — 24H HOURLY PRICE TRACKER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tab-desc">Tracks price movement every hour for 24 hours after signal. Final report at 24H shows exactly where price went and how much it moved. WIN = price moved in predicted direction after 24H.</div>', unsafe_allow_html=True)
+
+    # ── Load pre signals ──────────────────────────────────────────────
+    try:
+        df_pre_all = pd.read_csv(GL_PERF_FILE) if os.path.exists(GL_PERF_FILE) else pd.DataFrame()
+        df_pre = df_pre_all[df_pre_all['type'].isin(['PRE_GAINER','PRE_LOSER','PRE_GAINER_STAR','PRE_LOSER_STAR'])].copy() if not df_pre_all.empty else pd.DataFrame()
+    except:
+        df_pre = pd.DataFrame()
+
+    # ── Manual CSV Upload Analyzer ────────────────────────────────────
+    with st.expander("📂 Manual CSV Upload — Analyze Your Own Pre-Signal Data", expanded=False):
+        st.markdown('<div style="font-size:.75rem;color:#6b7280;margin-bottom:8px;">Upload a CSV with columns: symbol, type (PRE_GAINER/PRE_LOSER), entry price, timestamp. System will calculate hourly % moves and generate final report.</div>', unsafe_allow_html=True)
+        _up_pre = st.file_uploader("Upload Pre-Signal CSV", type=["csv"], key="pre_csv_upload")
+        if _up_pre is not None:
+            try:
+                df_manual = pd.read_csv(_up_pre)
+                st.success(f"✅ Loaded {len(df_manual)} rows")
+                # Show what columns were found
+                st.write("Columns found:", list(df_manual.columns))
+                # If it has hourly columns, show analysis
+                _h_cols = [f'h{i}_pct' for i in range(1,25) if f'h{i}_pct' in df_manual.columns]
+                if _h_cols:
+                    st.markdown("**Hourly Movement Analysis:**")
+                    _pre_g = df_manual[df_manual['type'].isin(['PRE_GAINER','PRE_GAINER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
+                    _pre_l = df_manual[df_manual['type'].isin(['PRE_LOSER','PRE_LOSER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
+                    if not _pre_g.empty:
+                        st.markdown("🟢 **Pre-Gainer average % move by hour:**")
+                        _avgs = {col: round(_pre_g[col].astype(float).mean(), 2) for col in _h_cols if col in _pre_g.columns}
+                        _avg_df = pd.DataFrame([_avgs], index=["Avg % move"])
+                        _avg_df.columns = [f"H{i}" for i in range(1, len(_avgs)+1)]
+                        st.dataframe(_avg_df, use_container_width=True)
+                    if not _pre_l.empty:
+                        st.markdown("🔴 **Pre-Loser average % move by hour:**")
+                        _avgs_l = {col: round(_pre_l[col].astype(float).mean(), 2) for col in _h_cols if col in _pre_l.columns}
+                        _avg_df_l = pd.DataFrame([_avgs_l], index=["Avg % move"])
+                        _avg_df_l.columns = [f"H{i}" for i in range(1, len(_avgs_l)+1)]
+                        st.dataframe(_avg_df_l, use_container_width=True)
+                else:
+                    st.warning("No hourly columns (h1_pct..h24_pct) found. Upload a gl_performance.csv exported from APEXAI.")
+                st.dataframe(df_manual, use_container_width=True, height=300)
+            except Exception as _e:
+                st.error(f"Error reading CSV: {_e}")
+
+    if df_pre.empty:
+        st.markdown('<div class="empty-st">🔭 No Pre-Gainer/Pre-Loser signals logged yet</div>', unsafe_allow_html=True)
+    else:
+        # ── Summary stats ─────────────────────────────────────────────
+        _pg = df_pre[df_pre['type'].isin(['PRE_GAINER','PRE_GAINER_STAR'])]
+        _pl = df_pre[df_pre['type'].isin(['PRE_LOSER','PRE_LOSER_STAR'])]
+        _pg_wins = len(_pg[_pg['outcome']=='WIN']); _pg_loss = len(_pg[_pg['outcome']=='LOSS'])
+        _pl_wins = len(_pl[_pl['outcome']=='WIN']); _pl_loss = len(_pl[_pl['outcome']=='LOSS'])
+        _pg_wr = round(_pg_wins/(_pg_wins+_pg_loss)*100) if (_pg_wins+_pg_loss)>0 else 0
+        _pl_wr = round(_pl_wins/(_pl_wins+_pl_loss)*100) if (_pl_wins+_pl_loss)>0 else 0
+        _pg_pending = len(_pg[_pg['outcome']=='PENDING'])
+        _pl_pending = len(_pl[_pl['outcome']=='PENDING'])
+
+        pc1,pc2,pc3,pc4,pc5,pc6 = st.columns(6)
+        pc1.metric("Pre-Gainer Total", len(_pg))
+        pc2.metric("Pre-Gainer Win Rate", f"{_pg_wr}%", f"{_pg_wins}W / {_pg_loss}L")
+        pc3.metric("Pre-Gainer Pending", _pg_pending)
+        pc4.metric("Pre-Loser Total", len(_pl))
+        pc5.metric("Pre-Loser Win Rate", f"{_pl_wr}%", f"{_pl_wins}W / {_pl_loss}L")
+        pc6.metric("Pre-Loser Pending", _pl_pending)
+
+        # ── Hourly avg move chart ─────────────────────────────────────
+        _h_pct_cols = [f'h{i}_pct' for i in range(1,25)]
+        _available_h = [c for c in _h_pct_cols if c in df_pre.columns]
+        if _available_h and len(df_pre) > 0:
+            st.markdown('<div style="font-size:.72rem;font-weight:700;color:#374151;margin:10px 0 6px;">📈 Average % Move by Hour After Signal</div>', unsafe_allow_html=True)
+            _h_labels = [f"H{i}" for i in range(1,25) if f'h{i}_pct' in df_pre.columns]
+
+            _pg_avgs, _pl_avgs = [], []
+            for _h in range(1,25):
+                _col = f'h{_h}_pct'
+                if _col not in df_pre.columns: continue
+                if not _pg.empty:
+                    _vals = pd.to_numeric(_pg[_col], errors='coerce').dropna()
+                    _pg_avgs.append(round(_vals.mean(),2) if len(_vals)>0 else None)
+                if not _pl.empty:
+                    _vals = pd.to_numeric(_pl[_col], errors='coerce').dropna()
+                    _pl_avgs.append(round(_vals.mean(),2) if len(_vals)>0 else None)
+
+            _chart_data = {"Hour": _h_labels}
+            if _pg_avgs: _chart_data["Pre-Gainer Avg %"] = _pg_avgs[:len(_h_labels)]
+            if _pl_avgs: _chart_data["Pre-Loser Avg %"] = _pl_avgs[:len(_h_labels)]
+            if len(_chart_data) > 1:
+                st.line_chart(pd.DataFrame(_chart_data).set_index("Hour"))
+
+        # ── Active pre signals with live hourly status ────────────────
+        _active_pre = df_pre[df_pre['outcome']=='PENDING'].copy()
+        if not _active_pre.empty:
+            st.markdown(f'<div style="font-size:.72rem;font-weight:700;color:#374151;margin:10px 0 4px;">⏳ Active Signals ({len(_active_pre)}) — Tracking Hourly</div>', unsafe_allow_html=True)
+            for _, _row in _active_pre.iterrows():
+                try:
+                    _sig_time = pd.to_datetime(_row['timestamp_utc'])
+                    _age_h = (pd.Timestamp.utcnow() - _sig_time.replace(tzinfo=None)).total_seconds()/3600
+                    _hrs_done = min(int(_age_h), 24)
+                    _hrs_left = max(0, 24 - _hrs_done)
+                    _col_bg = '#f0fdf4' if _row['type']=='PRE_GAINER' else '#fef2f2'
+                    _col_bd = '#86efac' if _row['type']=='PRE_GAINER' else '#fca5a5'
+                    _icon = '🟢' if _row['type']=='PRE_GAINER' else '🔴'
+                    # Build hourly snapshot string
+                    _snap = []
+                    for _h in range(1, _hrs_done+1):
+                        _v = str(_row.get(f'h{_h}_pct',''))
+                        if _v and _v != 'nan':
+                            _snap.append(f"H{_h}: {float(_v):+.1f}%")
+                    _snap_str = " · ".join(_snap[-6:]) if _snap else "waiting for H1..."
+                    st.markdown(f'''<div style="background:{_col_bg};border:1px solid {_col_bd};border-radius:9px;padding:10px 14px;margin-bottom:6px;font-family:monospace;font-size:.68rem;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                            <span style="font-size:.82rem;font-weight:700;">{_icon} {_row['symbol']} — {_row['type']}</span>
+                            <span style="font-size:.62rem;color:#6b7280;">H{_hrs_done}/24 · {_hrs_left}h remaining · {_row.get('outcome_note','')} </span>
+                        </div>
+                        <div style="color:#374151;">Entry: <b>${float(_row['entry']):.4f}</b> · Signaled: {str(_row['timestamp_utc'])[:16]} UTC · Live snapshots: {_snap_str}</div>
+                    </div>''', unsafe_allow_html=True)
+                except: pass
+
+        # ── Completed 24H reports ─────────────────────────────────────
+        _done_pre = df_pre[df_pre['outcome'].isin(['WIN','LOSS'])].copy()
+        if not _done_pre.empty:
+            st.markdown(f'<div style="font-size:.72rem;font-weight:700;color:#374151;margin:10px 0 4px;">📋 Completed 24H Reports ({len(_done_pre)})</div>', unsafe_allow_html=True)
+            for _, _row in _done_pre.sort_values('timestamp_utc', ascending=False).iterrows():
+                try:
+                    _win = _row['outcome'] == 'WIN'
+                    _col_bg = '#f0fdf4' if _win else '#fef2f2'
+                    _col_bd = '#86efac' if _win else '#fca5a5'
+                    _icon = '✅' if _win else '❌'
+                    _final_r = str(_row.get('final_report',''))
+                    _final_pct = float(_row.get('final_pct',0) or 0)
+                    # Build hourly table
+                    _snap_parts = []
+                    for _h in range(1, 25):
+                        _v = str(_row.get(f'h{_h}_pct',''))
+                        if _v and _v != 'nan':
+                            try: _snap_parts.append(f"H{_h}:{float(_v):+.1f}%")
+                            except: pass
+                    _snap_str = " | ".join(_snap_parts) if _snap_parts else "–"
+                    st.markdown(f'''<div style="background:{_col_bg};border:1px solid {_col_bd};border-radius:9px;padding:10px 14px;margin-bottom:6px;font-family:monospace;font-size:.65rem;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+                            <span style="font-size:.8rem;font-weight:700;">{_icon} {_row['symbol']} — {_row['type']}</span>
+                            <span style="color:{'#059669' if _win else '#dc2626'};font-weight:700;font-size:.78rem;">{_final_pct:+.2f}% at 24H</span>
+                        </div>
+                        <div style="color:#374151;margin-bottom:4px;">Entry: ${float(_row['entry']):.4f} · {str(_row['timestamp_utc'])[:16]} UTC</div>
+                        <div style="color:#6b7280;word-break:break-all;">{_snap_str}</div>
+                        {f'<div style="color:#374151;margin-top:4px;font-weight:600;">{_final_r}</div>' if _final_r and _final_r != 'nan' else ''}
+                    </div>''', unsafe_allow_html=True)
+                except: pass
 
     st.stop()
 
@@ -5639,9 +6043,13 @@ eff_s=S.copy()
 eff_s.update({'scan_depth':q_depth,'min_score':q_min,'btc_filter':q_btc,'require_momentum':q_mom,
               'auto_scan':q_auto,'auto_interval':q_auto_int,'scan_modes':selected_modes})
 
-col_btn,_=st.columns([2,5])
+col_btn,col_status=st.columns([2,5])
 with col_btn: do_scan=st.button("⚡  RUN PUMP/DUMP SCAN",use_container_width=True)
 if eff_s.get('auto_scan'): do_scan=True; time.sleep(0.3)
+# Show instant feedback so user knows button was received
+if do_scan:
+    with col_status:
+        st.markdown('<div style="font-family:monospace;font-size:.72rem;color:#2563eb;padding:10px 0;">⚡ Scan triggered — fetching coins...</div>', unsafe_allow_html=True)
 
 # ── Kill zone — block main scanner + Sentinel completely ─────────────────────
 _ks_on = eff_s.get('kill_switch_on', False)
@@ -6233,6 +6641,8 @@ with dst_col3:
 # Auto-run on startup and every dst_interval minutes
 dst_last_ts = st.session_state.get('dst_last_ts', 0)
 dst_should_run = dst_run or (time.time() - dst_last_ts >= dst_interval * 60)
+# Don't run DEMA during same rerun as main scan — avoids sequential blocking
+if do_scan and not dst_run: dst_should_run = False
 
 # Default watchlist for DEMA when APEX hasn't run yet
 _DST_DEFAULT_COINS = [
@@ -6252,12 +6662,9 @@ if dst_should_run:
     if coin_list:
         with st.spinner(f"🔵 DEMA+ST scanning {len(coin_list)} coins on {eff_s.get('dst_timeframe','5m')}..."):
             try:
-                import ccxt as _ccxt_run
                 from datetime import datetime as _dt_dst, timezone as _tz_dst
-                exchange_clients = {
-                    'gate':  _ccxt_run.gateio({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
-                    'okx':   _ccxt_run.okx({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
-                    'mexc':  _ccxt_run.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}}),
+                exchange_clients = _get_exchange_clients()
+                _dummy = {  # keep dict style for compatibility
                 }
                 dst_signals = run_dst_scan(coin_list, eff_s, exchange_clients)
                 st.session_state['dst_results'] = dst_signals
