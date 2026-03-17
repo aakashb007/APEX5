@@ -5456,44 +5456,43 @@ if nav=="📊 Backtest":
                     # Run DEMA+ST
                     _dema = _dst_dema(_c, 200)
                     _st_line, _st_dir = _dst_supertrend(_h, _l, _c, 3.0, 10)
-                    _rsi = _dst_rsi(_c)
+
+                    # Convert st_dir to clean integer series
+                    _st_int = _st_dir.fillna(0).apply(lambda x: 1 if float(x) > 0 else -1)
 
                     # Find all ST flips (signals)
                     _sigs_found = []
-                    _prev_dir = None
-                    for _i in range(50, len(_df)-1):
-                        _cur_dir = int(_st_dir.iloc[_i])
-                        if _prev_dir is not None and _cur_dir != _prev_dir:
-                            # ST flipped — this is a signal
-                            _entry = float(_c.iloc[_i+1]) if _i+1 < len(_df) else float(_c.iloc[_i])
-                            _sig_dir = 'LONG' if _cur_dir == 1 else 'SHORT'
-                            # Find exit: next ST flip
-                            _exit_price = None
-                            _exit_i = None
-                            for _j in range(_i+2, min(_i+300, len(_df))):
-                                if int(_st_dir.iloc[_j]) != _cur_dir:
-                                    _exit_price = float(_c.iloc[_j])
-                                    _exit_i = _j
-                                    break
-                            if _exit_price is None:
-                                _exit_price = float(_c.iloc[-1])
-                                _exit_i = len(_df)-1
+                    for _i in range(51, len(_df)-2):
+                        _cur = int(_st_int.iloc[_i])
+                        _prev = int(_st_int.iloc[_i-1])
+                        if _cur == _prev: continue  # no flip
+                        if _cur == 0 or _prev == 0: continue
 
-                            if _sig_dir == 'LONG':
-                                _pnl = (_exit_price - _entry) / _entry * 100
-                            else:
-                                _pnl = (_entry - _exit_price) / _entry * 100
+                        # ST flipped here
+                        _entry = float(_c.iloc[_i])
+                        _sig_dir = 'LONG' if _cur == 1 else 'SHORT'
 
-                            _bars_held = (_exit_i - _i) if _exit_i else 0
-                            _sigs_found.append({
-                                'dir': _sig_dir,
-                                'entry': _entry,
-                                'exit': _exit_price,
-                                'pnl': round(_pnl, 2),
-                                'bars': _bars_held,
-                                'win': _pnl > 0
-                            })
-                        _prev_dir = _cur_dir
+                        # Find exit: next ST flip or end of data
+                        _exit_price = float(_c.iloc[-1])
+                        _exit_i = len(_df)-1
+                        for _j in range(_i+1, min(_i+500, len(_df)-1)):
+                            if int(_st_int.iloc[_j]) != _cur:
+                                _exit_price = float(_c.iloc[_j])
+                                _exit_i = _j
+                                break
+
+                        if _entry <= 0: continue
+                        _pnl = (_exit_price - _entry) / _entry * 100 if _sig_dir == 'LONG' else (_entry - _exit_price) / _entry * 100
+                        _bars_held = _exit_i - _i
+
+                        _sigs_found.append({
+                            'dir': _sig_dir,
+                            'entry': _entry,
+                            'exit': _exit_price,
+                            'pnl': round(_pnl, 2),
+                            'bars': _bars_held,
+                            'win': _pnl > 0
+                        })
 
                     if len(_sigs_found) < _t100_min_sigs: continue
 
