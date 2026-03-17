@@ -175,7 +175,7 @@ DEFAULT_SETTINGS = {
     # ── S18: API Keys ──
     "tg_token":"","tg_chat_id":"",
     "discord_webhook":"https://discord.com/api/webhooks/1476606856599179265/74wKbIJEXNJ9h10Ab0Q9Vp7ZmeJ52XY18CP3lKxg3eR1BbpZSdX65IT8hbZjpEIXSqEg",
-    "groq_key":"","cmc_key":"",
+    "groq_key":"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","cmc_key":"",
     "okx_key":"","okx_secret":"","okx_passphrase":"",
     "gate_key":"","gate_secret":"",
 
