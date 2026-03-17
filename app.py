@@ -24,56 +24,41 @@ def _get_exchange_clients():
         'binance': _ccxt_sync.binanceusdm({'enableRateLimit':True,'timeout':8000}),
     }
 
-@st.cache_data(ttl=300, show_spinner=False)
 def _binance_available():
-    """Test if Binance is accessible — cached 5 min so we don't re-test every scan."""
-    try:
-        import ccxt as _b
-        _ex = _b.binanceusdm({'enableRateLimit':True,'timeout':5000})
-        _ex.fetch_ticker('BTC/USDT')
-        return True
-    except:
-        return False
+    """Check if Binance was successfully used in this session."""
+    return st.session_state.get('_binance_ok', False)
 
 def fetch_ohlcv_smart(symbol, timeframe, limit, prefer_exchange='gate'):
-    """
-    Fetch OHLCV data — tries Binance first (best data), falls back to GATE/MEXC.
-    Binance symbol format: BTC/USDT (no :USDT suffix needed for binanceusdm)
-    Gate/MEXC format: BTC/USDT:USDT
-    """
+    """Fetch OHLCV — tries Binance once (no retry), instantly falls back to GATE."""
     import ccxt as _fx
-    # Convert symbol for Binance (remove :USDT suffix)
     _bnb_sym = symbol.replace(':USDT','').replace(':USD','')
 
-    # Try Binance first
-    if _binance_available():
+    # Try Binance only if it worked before this session OR not yet tested
+    if st.session_state.get('_binance_ok', None) != False:
         try:
-            _ex = _fx.binanceusdm({'enableRateLimit':True,'timeout':8000})
+            _ex = _fx.binanceusdm({'enableRateLimit':True,'timeout':3000})
             raw = _ex.fetch_ohlcv(_bnb_sym, timeframe, limit=limit)
-            if raw and len(raw) >= limit * 0.8:
+            if raw and len(raw) > 10:
+                st.session_state['_binance_ok'] = True
                 df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
-                df['_source'] = 'binance'
                 return df
-        except: pass
+        except:
+            st.session_state['_binance_ok'] = False  # don't try again this session
 
-    # Fallback to GATE
+    # GATE fallback
     try:
         _ex = _fx.gateio({'enableRateLimit':True,'options':{'defaultType':'swap'}})
         raw = _ex.fetch_ohlcv(symbol, timeframe, limit=limit)
         if raw and len(raw) > 10:
-            df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
-            df['_source'] = 'gate'
-            return df
+            return pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
     except: pass
 
-    # Final fallback to MEXC
+    # MEXC final fallback
     try:
         _ex = _fx.mexc({'enableRateLimit':True,'options':{'defaultType':'swap'}})
         raw = _ex.fetch_ohlcv(symbol, timeframe, limit=limit)
         if raw and len(raw) > 10:
-            df = pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
-            df['_source'] = 'mexc'
-            return df
+            return pd.DataFrame(raw, columns=['ts','open','high','low','close','volume']).astype(float)
     except: pass
 
     return pd.DataFrame()
@@ -4492,34 +4477,90 @@ if nav=="📒 Journal":
     # ── Manual CSV Upload Analyzer ────────────────────────────────────
     with st.expander("📂 Manual CSV Upload — Analyze Your Own Pre-Signal Data", expanded=False):
         st.markdown('<div style="font-size:.75rem;color:#6b7280;margin-bottom:8px;">Upload a CSV with columns: symbol, type (PRE_GAINER/PRE_LOSER), entry price, timestamp. System will calculate hourly % moves and generate final report.</div>', unsafe_allow_html=True)
+        st.markdown('''<div style="font-size:.72rem;color:#6b7280;margin-bottom:6px;">
+        Works with any CSV — with or without hourly columns. Required columns: <b>symbol, type, entry</b>.
+        Optional: timestamp, pnl_pct, outcome, h1_pct..h24_pct for full analysis.
+        </div>''', unsafe_allow_html=True)
         _up_pre = st.file_uploader("Upload Pre-Signal CSV", type=["csv"], key="pre_csv_upload")
         if _up_pre is not None:
             try:
                 df_manual = pd.read_csv(_up_pre)
-                st.success(f"✅ Loaded {len(df_manual)} rows")
-                # Show what columns were found
-                st.write("Columns found:", list(df_manual.columns))
-                # If it has hourly columns, show analysis
+                st.success(f"✅ Loaded {len(df_manual)} rows · Columns: {', '.join(df_manual.columns.tolist())}")
+
+                # ── Detect signal types ──────────────────────────────
+                _pre_g = df_manual[df_manual['type'].isin(['PRE_GAINER','PRE_GAINER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
+                _pre_l = df_manual[df_manual['type'].isin(['PRE_LOSER','PRE_LOSER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
+
+                # ── Basic stats (works without hourly columns) ───────
+                st.markdown("**📊 Basic Summary:**")
+                _b1,_b2,_b3,_b4 = st.columns(4)
+                _b1.metric("Total rows", len(df_manual))
+                _b2.metric("Pre-Gainer", len(_pre_g))
+                _b3.metric("Pre-Loser", len(_pre_l))
+                if 'outcome' in df_manual.columns:
+                    _wins = len(df_manual[df_manual['outcome']=='WIN'])
+                    _losses = len(df_manual[df_manual['outcome']=='LOSS'])
+                    _wr = round(_wins/(_wins+_losses)*100) if (_wins+_losses)>0 else 0
+                    _b4.metric("Win Rate", f"{_wr}%", f"{_wins}W/{_losses}L")
+
+                # ── pnl_pct analysis (works without hourly columns) ──
+                if 'pnl_pct' in df_manual.columns:
+                    st.markdown("**💰 P&L Analysis:**")
+                    _p1,_p2,_p3,_p4 = st.columns(4)
+                    _pnls = pd.to_numeric(df_manual['pnl_pct'], errors='coerce').dropna()
+                    _p1.metric("Avg P&L", f"{_pnls.mean():.2f}%")
+                    _p2.metric("Best", f"{_pnls.max():.2f}%")
+                    _p3.metric("Worst", f"{_pnls.min():.2f}%")
+                    _p4.metric("Median", f"{_pnls.median():.2f}%")
+                    if not _pre_g.empty and 'pnl_pct' in _pre_g.columns:
+                        _pg_pnl = pd.to_numeric(_pre_g['pnl_pct'], errors='coerce').dropna()
+                        _pl_pnl = pd.to_numeric(_pre_l['pnl_pct'], errors='coerce').dropna() if not _pre_l.empty else pd.Series()
+                        _pc1,_pc2 = st.columns(2)
+                        if len(_pg_pnl)>0: _pc1.metric("Pre-Gainer avg", f"{_pg_pnl.mean():.2f}%")
+                        if len(_pl_pnl)>0: _pc2.metric("Pre-Loser avg", f"{_pl_pnl.mean():.2f}%")
+
+                # ── final_pct analysis ───────────────────────────────
+                if 'final_pct' in df_manual.columns:
+                    st.markdown("**🎯 24H Final Move Analysis:**")
+                    _fp1,_fp2 = st.columns(2)
+                    if not _pre_g.empty:
+                        _fg = pd.to_numeric(_pre_g['final_pct'], errors='coerce').dropna()
+                        if len(_fg)>0:
+                            _fp1.metric("Pre-Gainer 24H avg", f"{_fg.mean():.2f}%",
+                                       f"{len(_fg[_fg>0])} moved up / {len(_fg[_fg<0])} down")
+                    if not _pre_l.empty:
+                        _fl = pd.to_numeric(_pre_l['final_pct'], errors='coerce').dropna()
+                        if len(_fl)>0:
+                            _fp2.metric("Pre-Loser 24H avg", f"{_fl.mean():.2f}%",
+                                       f"{len(_fl[_fl<0])} moved down / {len(_fl[_fl>0])} up")
+
+                # ── Hourly analysis (only if columns exist) ──────────
                 _h_cols = [f'h{i}_pct' for i in range(1,25) if f'h{i}_pct' in df_manual.columns]
                 if _h_cols:
-                    st.markdown("**Hourly Movement Analysis:**")
-                    _pre_g = df_manual[df_manual['type'].isin(['PRE_GAINER','PRE_GAINER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
-                    _pre_l = df_manual[df_manual['type'].isin(['PRE_LOSER','PRE_LOSER_STAR'])] if 'type' in df_manual.columns else pd.DataFrame()
+                    st.markdown(f"**⏱ Hourly Analysis ({len(_h_cols)} hours of data):**")
                     if not _pre_g.empty:
-                        st.markdown("🟢 **Pre-Gainer average % move by hour:**")
-                        _avgs = {col: round(_pre_g[col].astype(float).mean(), 2) for col in _h_cols if col in _pre_g.columns}
-                        _avg_df = pd.DataFrame([_avgs], index=["Avg % move"])
-                        _avg_df.columns = [f"H{i}" for i in range(1, len(_avgs)+1)]
-                        st.dataframe(_avg_df, use_container_width=True)
+                        st.markdown("🟢 Pre-Gainer avg % move by hour:")
+                        _avgs = {}
+                        for _col in _h_cols:
+                            _v = pd.to_numeric(_pre_g[_col], errors='coerce').dropna()
+                            if len(_v)>0: _avgs[_col.replace('_pct','')] = round(_v.mean(), 2)
+                        if _avgs:
+                            st.dataframe(pd.DataFrame([_avgs], index=["Avg %"]), use_container_width=True)
                     if not _pre_l.empty:
-                        st.markdown("🔴 **Pre-Loser average % move by hour:**")
-                        _avgs_l = {col: round(_pre_l[col].astype(float).mean(), 2) for col in _h_cols if col in _pre_l.columns}
-                        _avg_df_l = pd.DataFrame([_avgs_l], index=["Avg % move"])
-                        _avg_df_l.columns = [f"H{i}" for i in range(1, len(_avgs_l)+1)]
-                        st.dataframe(_avg_df_l, use_container_width=True)
+                        st.markdown("🔴 Pre-Loser avg % move by hour:")
+                        _avgs_l = {}
+                        for _col in _h_cols:
+                            _v = pd.to_numeric(_pre_l[_col], errors='coerce').dropna()
+                            if len(_v)>0: _avgs_l[_col.replace('_pct','')] = round(_v.mean(), 2)
+                        if _avgs_l:
+                            st.dataframe(pd.DataFrame([_avgs_l], index=["Avg %"]), use_container_width=True)
                 else:
-                    st.warning("No hourly columns (h1_pct..h24_pct) found. Upload a gl_performance.csv exported from APEXAI.")
+                    st.info("ℹ️ No hourly columns found — showing basic analysis only. Hourly columns (h1_pct..h24_pct) are added automatically by APEXAI after signals complete 24H tracking.")
+
+                # ── Full data table ──────────────────────────────────
+                st.markdown("**📋 Full Data:**")
                 st.dataframe(df_manual, use_container_width=True, height=300)
+
             except Exception as _e:
                 st.error(f"Error reading CSV: {_e}")
 
@@ -5343,7 +5384,7 @@ if nav=="🧠 Catalyst":
     st.markdown('<div class="section-h">🧠 Catalyst Intelligence — AI Narrative Scanner</div>', unsafe_allow_html=True)
     st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:12px;">Powered by Groq LLaMA 3.1 · Identifies narrative-driven pump catalysts · Cross-validates with APEX signals</div>', unsafe_allow_html=True)
 
-    groq_key = S.get('groq_key','') or "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"
+    groq_key = (S.get('groq_key','') or "").strip() or "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"
 
     cat_col1, cat_col2, cat_col3 = st.columns([2,2,4])
     with cat_col1:
@@ -5894,7 +5935,7 @@ if nav=="🔍 Coin Analyzer":
                 # ── AI verdict via Groq ───────────────────────────────────
                 _ai_verdict = ""
                 try:
-                    _gk = S.get('groq_key','') or "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"
+                    _gk = (S.get('groq_key','') or "").strip() or "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"
                     _ca_prompt = f"""You are a professional crypto futures trader. Analyze this coin and give a direct trading verdict.
 
 COIN: {_ca_coin}/USDT perpetual on {_ca_exch}
@@ -6575,7 +6616,7 @@ else:
     if results and _ai_stale and st.session_state.get('groq_key','') or (results and _ai_stale):
         try:
             import requests as _rq
-            _gk = st.session_state.get('groq_key','') or "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"
+            _gk = (S.get('groq_key','') or "").strip() or "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"
             _sig_list = []
             for _r in results[:8]:
                 _sig_list.append({
