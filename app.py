@@ -5395,6 +5395,165 @@ if nav=="📊 Backtest":
                 st.error(f"DEMA backtest error: {_e_bt}")
                 st.code(traceback.format_exc())
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # DEMA+ST TOP 100 SCANNER — Strategy success rate by coin
+    # ═══════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown('<div class="section-h">📊 DEMA+ST TOP 100 — Strategy Success Rate Scanner</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:8px;">Scans top 100 coins by volume. For each coin runs DEMA+ST backtest and returns ranked list showing win rate, avg PnL, and total signals. Find which coins work BEST with this strategy.</div>', unsafe_allow_html=True)
+
+    _t100_c1, _t100_c2, _t100_c3, _t100_c4 = st.columns([1,1,1,2])
+    with _t100_c1:
+        _t100_tf = st.selectbox("Timeframe", ["5m","15m","1h"], index=0, key="t100_tf")
+    with _t100_c2:
+        _t100_min_sigs = st.number_input("Min signals", 1, 20, 3, key="t100_min_sigs")
+    with _t100_c3:
+        _t100_top_n = st.slider("Coins to scan", 10, 100, 50, step=10, key="t100_n")
+    with _t100_c4:
+        _t100_run = st.button("▶ Run Top 100 DEMA Scan", use_container_width=True, key="t100_run")
+
+    st.markdown('<div style="font-family:monospace;font-size:.6rem;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-bottom:10px;color:#78350f;">⚠️ This scans multiple coins — takes 5-15 minutes depending on coin count. Results ranked by win rate.</div>', unsafe_allow_html=True)
+
+    if _t100_run:
+        _t100_results = []
+        _t100_progress = st.progress(0)
+        _t100_status = st.empty()
+
+        try:
+            import ccxt as _ccxt_t100
+            _t100_ex = _ccxt_t100.mexc({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+
+            # Get top N coins by volume
+            _t100_status.markdown('<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">📡 Fetching top coins by volume...</div>', unsafe_allow_html=True)
+            _t100_tickers = _t100_ex.fetch_tickers()
+            _t100_sorted = sorted(
+                [(s, t) for s, t in _t100_tickers.items() if s.endswith(':USDT') and t.get('quoteVolume', 0)],
+                key=lambda x: float(x[1].get('quoteVolume', 0) or 0),
+                reverse=True
+            )[:_t100_top_n]
+
+            _t100_coins = [s for s, _ in _t100_sorted]
+            _t100_status.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">✅ Got {len(_t100_coins)} coins — starting DEMA backtest...</div>', unsafe_allow_html=True)
+
+            for _idx, _sym in enumerate(_t100_coins):
+                _pct = int((_idx + 1) / len(_t100_coins) * 100)
+                _t100_progress.progress(_pct)
+                _t100_status.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">🔵 [{_idx+1}/{len(_t100_coins)}] {_sym.replace("/USDT:USDT","")} | Found: {len(_t100_results)} coins with signals</div>', unsafe_allow_html=True)
+
+                try:
+                    _lim = 2000 if _t100_tf == '5m' else 1000
+                    _raw = _t100_ex.fetch_ohlcv(_sym, _t100_tf, limit=_lim)
+                    if not _raw or len(_raw) < 100: continue
+
+                    _df = pd.DataFrame(_raw, columns=['ts','open','high','low','close','volume']).astype(float)
+                    _c = _df['close']; _h = _df['high']; _l = _df['low']
+
+                    # Run DEMA+ST
+                    _dema = _dst_dema(_c, 200)
+                    _st_line, _st_dir = _dst_supertrend(_h, _l, _c, 3.0, 10)
+                    _rsi = _dst_rsi(_c)
+
+                    # Find all ST flips (signals)
+                    _sigs_found = []
+                    _prev_dir = None
+                    for _i in range(50, len(_df)-1):
+                        _cur_dir = int(_st_dir.iloc[_i])
+                        if _prev_dir is not None and _cur_dir != _prev_dir:
+                            # ST flipped — this is a signal
+                            _entry = float(_c.iloc[_i+1]) if _i+1 < len(_df) else float(_c.iloc[_i])
+                            _sig_dir = 'LONG' if _cur_dir == 1 else 'SHORT'
+                            # Find exit: next ST flip
+                            _exit_price = None
+                            _exit_i = None
+                            for _j in range(_i+2, min(_i+300, len(_df))):
+                                if int(_st_dir.iloc[_j]) != _cur_dir:
+                                    _exit_price = float(_c.iloc[_j])
+                                    _exit_i = _j
+                                    break
+                            if _exit_price is None:
+                                _exit_price = float(_c.iloc[-1])
+                                _exit_i = len(_df)-1
+
+                            if _sig_dir == 'LONG':
+                                _pnl = (_exit_price - _entry) / _entry * 100
+                            else:
+                                _pnl = (_entry - _exit_price) / _entry * 100
+
+                            _bars_held = (_exit_i - _i) if _exit_i else 0
+                            _sigs_found.append({
+                                'dir': _sig_dir,
+                                'entry': _entry,
+                                'exit': _exit_price,
+                                'pnl': round(_pnl, 2),
+                                'bars': _bars_held,
+                                'win': _pnl > 0
+                            })
+                        _prev_dir = _cur_dir
+
+                    if len(_sigs_found) < _t100_min_sigs: continue
+
+                    _wins = sum(1 for s in _sigs_found if s['win'])
+                    _losses = len(_sigs_found) - _wins
+                    _wr = round(_wins / len(_sigs_found) * 100, 1)
+                    _avg_pnl = round(sum(s['pnl'] for s in _sigs_found) / len(_sigs_found), 2)
+                    _avg_win = round(sum(s['pnl'] for s in _sigs_found if s['win']) / max(_wins,1), 2)
+                    _avg_loss = round(sum(s['pnl'] for s in _sigs_found if not s['win']) / max(_losses,1), 2)
+                    _avg_bars = round(sum(s['bars'] for s in _sigs_found) / len(_sigs_found), 0)
+
+                    _t100_results.append({
+                        'Symbol': _sym.replace('/USDT:USDT','').replace('/USDT',''),
+                        'Win Rate': f"{_wr}%",
+                        'Win Rate Raw': _wr,
+                        'Total Signals': len(_sigs_found),
+                        'Wins': _wins,
+                        'Losses': _losses,
+                        'Avg PnL %': _avg_pnl,
+                        'Avg Win %': _avg_win,
+                        'Avg Loss %': _avg_loss,
+                        'Avg Bars Held': int(_avg_bars),
+                    })
+
+                except: continue
+
+            _t100_progress.progress(100)
+            _t100_status.empty()
+
+            if not _t100_results:
+                st.warning("No coins found with enough signals. Lower Min Signals or increase coin count.")
+            else:
+                _df_t100 = pd.DataFrame(_t100_results).sort_values('Win Rate Raw', ascending=False).drop(columns=['Win Rate Raw'])
+                st.success(f"✅ Scanned {len(_t100_coins)} coins — {len(_df_t100)} had enough signals (≥{_t100_min_sigs})")
+
+                # Top 10 highlight
+                st.markdown('<div style="font-size:.75rem;font-weight:700;color:#059669;margin:10px 0 5px;">🏆 Best coins for DEMA+ST strategy (ranked by win rate):</div>', unsafe_allow_html=True)
+                _top10 = _df_t100.head(10)
+                for _, _row in _top10.iterrows():
+                    _wr_val = float(_row['Win Rate'].replace('%',''))
+                    _col = '#059669' if _wr_val >= 60 else ('#d97706' if _wr_val >= 50 else '#dc2626')
+                    st.markdown(f'''<div style="background:#fff;border:1px solid #e5e7eb;border-radius:9px;padding:9px 14px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;font-family:monospace;font-size:.7rem;">
+                        <span style="font-size:.85rem;font-weight:700;color:#0d0f14;">{_row['Symbol']}</span>
+                        <span style="color:{_col};font-weight:700;font-size:.85rem;">{_row['Win Rate']}</span>
+                        <span style="color:#6b7280;">Signals: {_row['Total Signals']} | W/L: {_row['Wins']}/{_row['Losses']}</span>
+                        <span style="color:#2563eb;">Avg PnL: {_row['Avg PnL %']:+.2f}%</span>
+                        <span style="color:#059669;">Avg Win: {_row['Avg Win %']:+.2f}%</span>
+                        <span style="color:#dc2626;">Avg Loss: {_row['Avg Loss %']:+.2f}%</span>
+                        <span style="color:#9ca3af;">Avg Hold: {_row['Avg Bars Held']} bars</span>
+                    </div>''', unsafe_allow_html=True)
+
+                st.markdown('<div style="font-size:.72rem;font-weight:600;color:#374151;margin:12px 0 5px;">📋 Full Results Table:</div>', unsafe_allow_html=True)
+                st.dataframe(_df_t100, use_container_width=True, height=400)
+
+                # Download
+                st.download_button(
+                    "⬇️ Download Results CSV",
+                    _df_t100.to_csv(index=False),
+                    file_name=f"dema_top100_{_t100_tf}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv"
+                )
+
+        except Exception as _e_t100:
+            st.error(f"Top 100 scan error: {_e_t100}")
+
     st.stop()
 
 # ═══════════════════════════════════════════════════════════════════════════
