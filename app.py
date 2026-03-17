@@ -4919,20 +4919,25 @@ if nav=="📊 Backtest":
     # ══════════════════════════════════════════════════════════════════════
     st.info("📊 **How it works:** Fetches OHLCV candles from signal timestamp and scans candle HIGH/LOW to find which hits first — TP or SL. 100% accurate regardless of when you run it.")
 
+    _bt_journal_ok = False
     if not os.path.exists(JOURNAL_FILE):
-        st.warning("No journal file found. Run some scans first."); st.stop()
-    try: df_bt=pd.read_csv(JOURNAL_FILE)
-    except: df_bt=pd.DataFrame()
-    if df_bt.empty:
-        st.warning("Journal is empty — run scans first."); st.stop()
+        st.warning("No journal file found. Run some scans first to use journal backtest.")
+    else:
+        try: df_bt=pd.read_csv(JOURNAL_FILE)
+        except: df_bt=pd.DataFrame()
+        if df_bt.empty:
+            st.warning("Journal is empty — run scans first to use journal backtest.")
+        else:
+            _bt_journal_ok = True
 
-    # ── FILTERS ──────────────────────────────────────────────────────────
-    bt1,bt2,bt3,bt4,bt5=st.columns(5)
-    with bt1: bt_min_sc=st.slider("Min score",1,100,int(S.get('backtest_min_score',50)))
-    with bt2: bt_days=st.slider("Days back",1,90,int(S.get('backtest_days',30)))
-    with bt3: bt_cls=st.selectbox("Class filter",["ALL","squeeze","breakout","whale_driven","early"])
-    with bt4: bt_type=st.selectbox("Type filter",["ALL","LONG","SHORT"])
-    with bt5: bt_candles=st.slider("Max candles per signal",50,500,200,step=50)
+    if _bt_journal_ok:
+     # ── FILTERS ────────────────────────────────────────────────────────
+     bt1,bt2,bt3,bt4,bt5=st.columns(5)
+     with bt1: bt_min_sc=st.slider("Min score",1,100,int(S.get('backtest_min_score',50)))
+     with bt2: bt_days=st.slider("Days back",1,90,int(S.get('backtest_days',30)))
+     with bt3: bt_cls=st.selectbox("Class filter",["ALL","squeeze","breakout","whale_driven","early"])
+     with bt4: bt_type=st.selectbox("Type filter",["ALL","LONG","SHORT"])
+     with bt5: bt_candles=st.slider("Max candles per signal",50,500,200,step=50)
 
     if st.button("▶️ RUN BACKTEST",use_container_width=True):
         df_bt['ts']=pd.to_datetime(df_bt['ts'],errors='coerce')
