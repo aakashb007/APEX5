@@ -4712,6 +4712,20 @@ if nav=="📊 Backtest":
         except Exception as e:
             st.error(f"Could not read CSV: {e}"); st.stop()
 
+        # Auto-remap GL performance CSV columns to backtest format
+        col_map = {
+            'entry': 'price',          # GL uses 'entry', backtest needs 'price'
+            'timestamp_utc': 'ts',     # GL uses 'timestamp_utc', backtest needs 'ts'
+            'direction': 'type',       # GL uses 'direction' (LONG/SHORT/WATCH)
+        }
+        for old_col, new_col in col_map.items():
+            if old_col in df_ext.columns and new_col not in df_ext.columns:
+                df_ext[new_col] = df_ext[old_col]
+
+        # Add missing exchange column if not present
+        if 'exchange' not in df_ext.columns:
+            df_ext['exchange'] = 'GATE'
+
         # Validate required columns
         required=['symbol','exchange','type','tp','sl','price','ts']
         missing=[c for c in required if c not in df_ext.columns]
@@ -4719,6 +4733,12 @@ if nav=="📊 Backtest":
             st.error(f"Missing required columns: {missing}")
             st.info(f"Your CSV has these columns: {list(df_ext.columns)}")
             st.stop()
+
+        # Filter out WATCH signals (PRE_GAINER/PRE_LOSER) — no TP/SL to backtest
+        _watch_count = len(df_ext[df_ext['type'].isin(['WATCH','PRE_GAINER','PRE_LOSER','PRE_GAINER_STAR','PRE_LOSER_STAR'])])
+        if _watch_count > 0:
+            st.info(f"ℹ️ {_watch_count} Pre-Gainer/Pre-Loser signals excluded (no TP/SL — use the 24H tracker in Journal instead)")
+            df_ext = df_ext[~df_ext['type'].isin(['WATCH','PRE_GAINER','PRE_LOSER','PRE_GAINER_STAR','PRE_LOSER_STAR'])].copy()
 
         st.success(f"✅ Loaded {len(df_ext)} signals from uploaded CSV")
         st.dataframe(df_ext.head(5),use_container_width=True)
@@ -5493,7 +5513,6 @@ red_flag should be true only for clear shill/spam/pump-and-dump patterns"""
                     headers={
                         "Authorization": f"Bearer {groq_key}",
                         "Content-Type": "application/json",
-                        "User-Agent": "Mozilla/5.0"
                     },
                     json={
                         "model": "llama-3.3-70b-versatile",
@@ -5976,7 +5995,7 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
 
                     _ar = _ca_req.post(
                         "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {_gk}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                        headers={"Authorization": f"Bearer {_gk}", "Content-Type": "application/json"},
                         json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": _ca_prompt}], "max_tokens": 400, "temperature": 0.2},
                         timeout=20
                     )
