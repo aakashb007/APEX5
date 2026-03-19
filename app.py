@@ -172,14 +172,14 @@ DEFAULT_SETTINGS = {
     "dst_use_rsi":False,"dst_rsi_ob":65,"dst_rsi_os":35,
     "dst_use_mom":False,"dst_mom_bars":3,
     "dst_use_dema_dist":False,"dst_min_dema_dist":0.1,
-    "dst_fresh_bars":10,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
+    "dst_fresh_bars":15,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
     "dst_confirm_boost":8,"dst_conflict_penalty":5,
     "dst_timeframe":"5m","dst_min_rr":1.5,"dst_min_score":3,
     "dst_auto_scan":False,"dst_interval":5,"dst_multi_tf":True,
     "dst_use_trail":False,"dst_trail_atr":2.50,
     "dst_partial":True,"dst_partial_pct":50,"dst_partial_rr":2.0,
     "dst_breakeven":True,"dst_be_rr":1.5,
-    "dst_watchlist":["SOL","BTC","ETH"],"dst_use_watchlist":True,
+    "dst_watchlist":["SOL","BTC","ETH","DOGE","XRP","BNB","ADA","AVAX","LINK","DOT","ARB","OP","NEAR","APT","SUI","HYPE","WIF","PEPE","INJ","TIA","SEI","JUP","AAVE","RUNE","ENA"],"dst_use_watchlist":True,
 
     # ── S15: Professional Filters ──
     "kill_switch_on":True,
@@ -1314,12 +1314,12 @@ def check_dst_signal(df, symbol, s=None):
         mom_short = (close_now < float(c.iloc[-1-MOM_BARS]) and close_now < open_now) if s.get('dst_use_mom', False) else True
         dema_ok   = (abs(close_now - dema_now) / close_now * 100 > MIN_DEMA_D)
 
-        # Fresh signal — Pine: barsInTrend <= 3
-        # Fresh signal — precompute flips on reset index for reliable lookup
+        # Fresh signal — Pine: barsInTrend <= FRESH_BARS
+        # Search up to 300 bars back for last flip — handles slow/trending markets
         _chg_fn = (st_dir != st_dir.shift(1)).reset_index(drop=True)
         _n = len(_chg_fn)
         bars_since = 999
-        for j in range(1, 20):
+        for j in range(1, min(300, _n)):
             _idx = _n - 1 - j
             if _idx >= 0 and bool(_chg_fn.iloc[_idx]):
                 bars_since = j - 1
@@ -4069,7 +4069,7 @@ if nav=="⚙️ Settings":
             ns_dst_fresh_bars = st.slider("Max bars since ST flip", 1, 20, int(S.get('dst_fresh_bars', 5)))
             st.markdown('<div class="setting-help">Only fires if ST flipped within this many candles</div>', unsafe_allow_html=True)
             ns_dst_sl_atr = st.number_input("SL ATR ×", 0.5, 4.0, float(S.get('dst_sl_atr', 1.5)), 0.25, format="%.2f")
-            ns_dst_timeframe = st.selectbox("Timeframe", ["1m","3m","5m","15m","30m","1h","4h"], index=["1m","3m","5m","15m","30m","1h","4h"].index(S.get('dst_timeframe','5m')))
+            ns_dst_timeframe = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h"], index=["1m","5m","15m","30m","1h","4h"].index(S.get('dst_timeframe','5m') if S.get('dst_timeframe','5m') in ["1m","5m","15m","30m","1h","4h"] else "5m"))
             ns_dst_tp_atr = st.number_input("TP ATR ×", 1.0, 8.0, float(S.get('dst_tp_atr', 3.0)), 0.25, format="%.2f")
             st.markdown('<div class="setting-help">DST TP/SL shown in confirm reason only. APEX TP/SL is unchanged.</div>', unsafe_allow_html=True)
         with dst_c4:
@@ -5385,7 +5385,7 @@ if nav=="📊 Backtest":
                         # Find last ST flip index
                         _last_flip_idx = -1
                         _bs=999
-                        for _j in range(1,20):
+                        for _j in range(1,300):
                             _idx = _i - _j
                             if _idx >= 0 and bool(_chg_bt.iloc[_idx]):
                                 _last_flip_idx = _idx
@@ -5640,7 +5640,7 @@ if nav=="📊 Backtest":
                         _dema_ok=abs(_cn-_dn)/_cn*100>0.3
                         # Find last flip
                         _last_flip_idx=-1; _bs=999
-                        for _j in range(1,20):
+                        for _j in range(1,300):
                             _ix=_i-_j
                             if _ix>=0 and bool(_chg_t.iloc[_ix]):
                                 _last_flip_idx=_ix; _bs=_j-1; break
@@ -7190,6 +7190,10 @@ _DST_DEFAULT_COINS = [
     'ATOM/USDT:USDT','LTC/USDT:USDT','BCH/USDT:USDT','ARB/USDT:USDT',
     'OP/USDT:USDT','NEAR/USDT:USDT','APT/USDT:USDT','SUI/USDT:USDT',
     'HYPE/USDT:USDT','WIF/USDT:USDT','PEPE/USDT:USDT','INJ/USDT:USDT',
+    'TIA/USDT:USDT','SEI/USDT:USDT','JUP/USDT:USDT','STRK/USDT:USDT',
+    'RENDER/USDT:USDT','FET/USDT:USDT','AAVE/USDT:USDT','MKR/USDT:USDT',
+    'LDO/USDT:USDT','RUNE/USDT:USDT','STX/USDT:USDT','MANTA/USDT:USDT',
+    'JTO/USDT:USDT','PYTH/USDT:USDT','PENDLE/USDT:USDT','ENA/USDT:USDT',
 ]
 
 if dst_should_run:
