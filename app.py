@@ -243,6 +243,99 @@ def _get_groq_key():
         pass
     return ""
 
+def _ai_analyse_signals(signals, scanner_type='APEX', extra_context=''):
+    import requests as _rq, json as _jj
+    _gk = _get_groq_key()
+    if not _gk or not signals:
+        return {}
+    try:
+        _blocks = []
+        for sig in signals[:8]:
+            sym = sig.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+            direction = sig.get('direction', sig.get('type', 'WATCH'))
+            if scanner_type == 'DEMA':
+                block = (
+                    f"COIN:{sym} TF:{sig.get('tf','5m').upper()} DIR:{direction}\n"
+                    f"Entry:${sig.get('close',0):.4f} SL:${sig.get('sl',0):.4f} TP:${sig.get('tp',0):.4f} RR:{sig.get('rr',0)}\n"
+                    f"RSI:{sig.get('rsi',0):.1f} VOL:{sig.get('vol_ratio',1):.1f}x ST_flip:{sig.get('fresh_bars',0)}bars\n"
+                    f"DEMA200:${sig.get('dema',0):.4f} Exchange:{sig.get('exchange','MEXC')}"
+                )
+            elif scanner_type == 'GL':
+                reasons = sig.get('reasons', [])
+                block = (
+                    f"COIN:{sym} Signal:{sig.get('type','')} DIR:{direction}\n"
+                    f"4H:{sig.get('chg_4h',0):+.2f}% 1H:{sig.get('chg_1h',0):+.2f}%\n"
+                    f"RSI:{sig.get('rsi',0)} VOL:{sig.get('vol_ratio',1):.1f}x\n"
+                    f"Entry:${sig.get('close',0):.4f} TP:${sig.get('tp',0):.4f} SL:${sig.get('sl',0):.4f} RR:{sig.get('rr',0)}\n"
+                    f"Why: {' | '.join(reasons[:4]) if reasons else 'N/A'}"
+                )
+            else:
+                bd = sig.get('signal_breakdown', {})
+                reasons = sig.get('reasons', [])
+                warnings = sig.get('warnings', [])
+                block = (
+                    f"COIN:{sym} DIR:{direction} Class:{sig.get('cls','').upper()} Score:{sig.get('pump_score',0)}/100\n"
+                    f"RR:{sig.get('rr',0)} RSI:{sig.get('rsi',0):.1f} VOL:{sig.get('vol_ratio',1):.1f}x\n"
+                    f"Entry:${sig.get('entry_lo',sig.get('price',0)):.4f}-${sig.get('entry_hi',sig.get('price',0)):.4f} SL:${sig.get('sl',0):.4f} TP:${sig.get('tp',0):.4f}\n"
+                    f"Funding:{f"{sig.get('funding_rate',0)*100:.4f}%" if sig.get('funding_rate') is not None else 'N/A'} OI6h:{sig.get('oi_change_6h',0):+.1f}%\n"
+                    f"Whale:${sig.get('whale_wall_usdt',0)/1e6:.1f}M Vol24h:${sig.get('volume_24h',0)/1e6:.0f}M Chg24h:{sig.get('price_change_24h',0):+.1f}%\n"
+                    f"Breakdown:{', '.join([f"{k}:{v}pts" for k,v in bd.items() if v and v>0])}\n"
+                    f"WhyFlagged:{' | '.join(reasons[:5]) if reasons else 'N/A'}\n"
+                    f"Warnings:{' | '.join(warnings) if warnings else 'None'}\n"
+                    f"DualConfirmed:{sig.get('dual_confirmed',False)}"
+                )
+            _blocks.append((sym, block))
+
+        _scanner_ctx = {'APEX':'main pump/dump scanner','SENTINEL':'background top-100 scanner',
+                        'DEMA':'DEMA+SuperTrend strategy (83% win rate)','GL':'Gainers & Losers scanner'}.get(scanner_type, scanner_type)
+
+        _prompt = (f"You are a professional crypto futures trader analysing {_scanner_ctx} signals.\n"
+                   f"{extra_context}\nAnalyse each signal holistically.\n\nSIGNALS:\n"
+                   + "---\n".join(b for _, b in _blocks) +
+                   "\n\nRespond ONLY with JSON array, no preamble:\n"
+                   "[{\"symbol\":\"X\",\"trade_confidence\":85,\"rank\":1,\"reason\":\"specific data-based insight\","
+                   "\"avoid\":false,\"avoid_reason\":\"\",\"key_edge\":\"strongest reason to trade\",\"key_risk\":\"biggest risk\"}]\n\n"
+                   "Rules: avoid=true ONLY for genuine flaws. Never avoid based on direction alone. All text under 12 words.")
+
+        _resp = _rq.post("https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {_gk}", "Content-Type": "application/json"},
+            json={"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":_prompt}],
+                  "max_tokens":1000,"temperature":0.15}, timeout=20)
+        if _resp.status_code == 200:
+            _raw = _resp.json()['choices'][0]['message']['content'].strip()
+            _raw = _raw.replace('```json','').replace('```','').strip()
+            return {item['symbol']: item for item in _jj.loads(_raw)}
+    except:
+        pass
+    return {}
+
+def _render_ai_badge_html(ai_data):
+    if not ai_data: return ''
+    _conf = ai_data.get('trade_confidence', 0)
+    _rank = ai_data.get('rank', 99)
+    _reason = ai_data.get('reason', '')
+    _avoid = ai_data.get('avoid', False)
+    _avoid_r = ai_data.get('avoid_reason', '')
+    _edge = ai_data.get('key_edge', '')
+    _risk = ai_data.get('key_risk', '')
+    _cc = '#059669' if _conf >= 75 else ('#d97706' if _conf >= 55 else '#dc2626')
+    _cb = '#f0fdf4' if _conf >= 75 else ('#fffbeb' if _conf >= 55 else '#fef2f2')
+    _eh = f'<div style="font-family:monospace;font-size:.55rem;color:#166534;margin-top:2px;">⚡ Edge: {_edge}</div>' if _edge else ''
+    _rh = f'<div style="font-family:monospace;font-size:.55rem;color:#dc2626;margin-top:1px;">⚠ Risk: {_risk}</div>' if _risk else ''
+    if _rank == 1 and not _avoid:
+        return (f'<div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #059669;border-radius:7px;padding:7px 11px;margin:4px 0;">'
+                f'<div style="display:flex;align-items:center;justify-content:space-between;">'
+                f'<span style="font-family:monospace;font-size:.62rem;font-weight:900;color:#059669;">🎯 BEST SETUP — AI: {_conf}/100</span>'
+                f'<span style="font-family:monospace;font-size:.55rem;padding:1px 6px;border-radius:3px;background:#059669;color:white;">RANK #1</span>'
+                f'</div><div style="font-family:monospace;font-size:.57rem;color:#166534;margin-top:2px;">{_reason}</div>{_eh}{_rh}</div>')
+    elif _avoid:
+        return (f'<div style="background:#fef2f2;border:1px solid #dc2626;border-radius:6px;padding:6px 11px;margin:4px 0;">'
+                f'<span style="font-family:monospace;font-size:.6rem;font-weight:700;color:#dc2626;">⛔ AI: AVOID — {_avoid_r}</span>{_rh}</div>')
+    else:
+        return (f'<div style="background:{_cb};border:1px solid {_cc}44;border-radius:6px;padding:6px 11px;margin:4px 0;">'
+                f'<span style="font-family:monospace;font-size:.6rem;font-weight:700;color:{_cc};">🤖 AI: {_conf}/100 · Rank #{_rank}</span>'
+                f'<div style="font-family:monospace;font-size:.57rem;color:#475569;margin-top:1px;">{_reason}</div>{_eh}{_rh}</div>')
+
 @st.cache_data(ttl=10, show_spinner=False)
 def load_settings():
     s=DEFAULT_SETTINGS.copy()
@@ -6487,6 +6580,73 @@ if do_scan:
             if _sym_pre in _ai_pre:
                 _r['_ai_data'] = _ai_pre[_sym_pre]
 
+        # ── AI Holistic Scoring — runs HERE so _ai_data is ready when Discord fires ──
+        _ai_last_ts = st.session_state.get('ai_score_ts', 0)
+        _ai_stale = (_now_ts - _ai_last_ts) > 300
+        _gk_pre = _get_groq_key()
+        if st.session_state.results and _ai_stale and _gk_pre:
+            try:
+                import requests as _rq_pre, json as _json_pre
+                _btc_ctx_pre = f"BTC trend: {st.session_state.get('btc_trend','NEUTRAL')} | F&G: {_fng_pre} ({st.session_state.get('fng_txt','Neutral')})"
+                _coin_blocks_pre = []
+                for _r in st.session_state.results[:8]:
+                    _sym = _r['symbol'].replace('/USDT:USDT','').replace('/USDT','').upper()
+                    _bd = _r.get('signal_breakdown', {})
+                    _reasons = _r.get('reasons', [])
+                    _warnings = _r.get('warnings', [])
+                    _cat_text = ''
+                    for _c in st.session_state.get('cat_results', []):
+                        if _c.get('symbol','').upper() == _sym and not _c.get('red_flag'):
+                            _cat_text = _c.get('catalyst', '')[:120]
+                            break
+                    _funding = _r.get('funding_rate', None)
+                    _oi_ch = _r.get('oi_change_6h', 0)
+                    _vol24 = _r.get('volume_24h', 0)
+                    _whale = _r.get('whale_wall_usdt', 0)
+                    _change24 = _r.get('price_change_24h', 0)
+                    _block = (
+                        f"COIN:{_sym} DIR:{_r['type']} Class:{_r['cls'].upper()} Score:{_r['pump_score']}/100 RR:{_r.get('rr',0)} RSI:{_r.get('rsi',0):.1f}\n"
+                        f"Entry:${_r.get('entry_lo',_r.get('price',0)):.4f}-${_r.get('entry_hi',_r.get('price',0)):.4f} SL:${_r.get('sl',0):.4f} TP:${_r.get('tp',0):.4f}\n"
+                        f"24hChg:{_change24:+.1f}% Vol24h:${_vol24/1e6:.0f}M Whale:${_whale/1e6:.1f}M\n"
+                        f"Funding:{f'{_funding*100:.4f}%' if _funding is not None else 'N/A'} OI6h:{_oi_ch:+.1f}%\n"
+                        f"VolRatio:{_r.get('vol_ratio',1):.1f}x Dual:{_r.get('dual_confirmed',False)} Momentum:{_r.get('momentum_confirmed',False)}\n"
+                        f"Breakdown:{', '.join([f'{k}:{v}pts' for k,v in _bd.items() if v and v>0])}\n"
+                        f"WhyFlagged:{' | '.join(_reasons[:5]) if _reasons else 'N/A'}\n"
+                        f"Warnings:{' | '.join(_warnings) if _warnings else 'None'}\n"
+                        f"Catalyst:{_cat_text or 'None'} FGpenalty:{_r.get('_fg_penalty',0)}pts Age:{_r.get('_age_min',0):.1f}min"
+                    )
+                    _coin_blocks_pre.append((_sym, _block))
+                _all_blocks_pre = "\n---\n".join(b for _, b in _coin_blocks_pre)
+                _prompt_pre = (
+                    f"You are a professional crypto futures trader. Analyse each signal holistically and rank by trade priority.\n"
+                    f"MARKET: {_btc_ctx_pre}\nRULES: GATE exchange | 06:00-15:00 UTC | min R:R 1.5 | avoid >30% 24h pumps\n\n"
+                    f"SIGNALS:\n{_all_blocks_pre}\n\n"
+                    f"Respond ONLY with JSON array, no preamble:\n"
+                    f'[{{"symbol":"X","trade_confidence":85,"rank":1,"reason":"data-specific insight","avoid":false,"avoid_reason":"","key_edge":"strongest reason","key_risk":"biggest risk"}}]\n'
+                    f"Rules: avoid=true ONLY for real flaws. Never avoid by direction alone. All fields under 12 words."
+                )
+                _ar_pre = _rq_pre.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {_gk_pre}", "Content-Type": "application/json"},
+                    json={"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":_prompt_pre}],
+                          "max_tokens":1000,"temperature":0.15},
+                    timeout=25
+                )
+                if _ar_pre.status_code == 200:
+                    _raw_pre = _ar_pre.json()['choices'][0]['message']['content'].strip()
+                    _raw_pre = _raw_pre.replace('```json','').replace('```','').strip()
+                    _scored_pre = _json_pre.loads(_raw_pre)
+                    _new_ai_scores = {item['symbol']: item for item in _scored_pre}
+                    st.session_state['ai_trade_scores'] = _new_ai_scores
+                    st.session_state['ai_score_ts'] = _now_ts
+                    # Inject immediately into results so Discord alert has them
+                    for _r in st.session_state.results:
+                        _sym_r = _r['symbol'].replace('/USDT:USDT','').replace('/USDT','').upper()
+                        if _sym_r in _new_ai_scores:
+                            _r['_ai_data'] = _new_ai_scores[_sym_r]
+            except:
+                pass
+
         # ── Load persisted logged_sigs from file to survive restarts ─────
         _lsig_file = '/content/logged_sigs.txt'
         if 'logged_sigs_loaded' not in st.session_state:
@@ -6724,6 +6884,13 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
 
         if new_sigs:
             st.session_state.sentinel_signals_found=st.session_state.get('sentinel_signals_found',0)+len(new_sigs)
+            # AI holistic analysis on sentinel signals — before alerts fire
+            try:
+                _sent_ai = _ai_analyse_signals(new_sigs, scanner_type='SENTINEL')
+                for _sr in new_sigs:
+                    _ssym = _sr.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+                    if _ssym in _sent_ai: _sr['_ai_data'] = _sent_ai[_ssym]
+            except: pass
             if 'alerted_sigs' not in st.session_state: st.session_state.alerted_sigs=set()
             for r in new_sigs:
                 st.toast(f"🛰️ {r['symbol']} — {r['pump_score']}/100 {r['type']}",icon="🚨")
@@ -6748,12 +6915,15 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
                     if _s_ai:
                         _s_rank=_s_ai.get('rank',99); _s_conf=_s_ai.get('trade_confidence',0)
                         _s_reason=_s_ai.get('reason',''); _s_avoid=_s_ai.get('avoid',False)
+                        _s_edge=_s_ai.get('key_edge',''); _s_risk=_s_ai.get('key_risk','')
+                        _s_edge_l=f' | ⚡ {_s_edge}' if _s_edge else ''
+                        _s_risk_l=f' | ⚠ {_s_risk}' if _s_risk else ''
                         if _s_rank==1 and not _s_avoid:
-                            _s_ai_line = f"\n🎯 **BEST SETUP** — AI Score: {_s_conf}/100 · {_s_reason}"
+                            _s_ai_line = f"\n🎯 **BEST SETUP** — AI: {_s_conf}/100 · {_s_reason}{_s_edge_l}{_s_risk_l}"
                         elif _s_avoid:
-                            _s_ai_line = f"\n⛔ **AI: AVOID** — {_s_ai.get('avoid_reason','')}"
+                            _s_ai_line = f"\n⛔ **AI: AVOID** — {_s_ai.get('avoid_reason','')}{_s_risk_l}"
                         else:
-                            _s_ai_line = f"\n🤖 AI Score: {_s_conf}/100 · Rank #{_s_rank} · {_s_reason}"
+                            _s_ai_line = f"\n🤖 AI: {_s_conf}/100 · Rank #{_s_rank} · {_s_reason}{_s_edge_l}{_s_risk_l}"
                     # ── Freshness + F&G ───────────────────────────────────
                     _s_age = r.get('_age_min', 0)
                     _s_fresh_line = f"\n⏱ Signal age: {_s_age}m" if _s_age > 0 else ""
@@ -6898,92 +7068,7 @@ else:
     # ── Re-sort by final score ────────────────────────────────────────────────
     results = sorted(results, key=lambda x: x['_final_score'], reverse=True)
 
-    # ── AI Holistic Trade Analyser ────────────────────────────────────────────
-    # Sends FULL signal context per coin — reasons, breakdown, warnings, catalyst,
-    # funding, OI, whale wall, volume, entry zone — not just numbers.
-    _ai_scored = st.session_state.get('ai_trade_scores', {})
-    _ai_last_ts = st.session_state.get('ai_score_ts', 0)
-    _ai_stale = (_now_ts - _ai_last_ts) > 300  # re-score every 5 min
-    _gk = _get_groq_key()
-    if results and _ai_stale and _gk:
-        try:
-            import requests as _rq, json as _json_ai
-            _btc_ctx = f"BTC trend: {st.session_state.get('btc_trend','NEUTRAL')} | F&G: {_fng} ({st.session_state.get('fng_txt','Neutral')})"
-
-            # Build rich per-coin context blocks
-            _coin_blocks = []
-            for _r in results[:8]:
-                _sym = _r['symbol'].replace('/USDT:USDT','').replace('/USDT','').upper()
-                _bd = _r.get('signal_breakdown', {})
-                _reasons = _r.get('reasons', [])
-                _warnings = _r.get('warnings', [])
-                _sent = _r.get('sentiment', {})
-
-                # Catalyst narrative match
-                _cat_text = ''
-                for _c in st.session_state.get('cat_results', []):
-                    if _c.get('symbol','').upper() == _sym and not _c.get('red_flag'):
-                        _cat_text = _c.get('catalyst', '')[:120]
-                        break
-
-                # Funding + OI
-                _funding = _r.get('funding_rate', None)
-                _oi_ch = _r.get('oi_change_6h', 0)
-                _vol24 = _r.get('volume_24h', 0)
-                _whale = _r.get('whale_wall_usdt', 0)
-                _change24 = _r.get('price_change_24h', 0)
-
-                _block = f"""
-COIN: {_sym} | Direction: {_r['type']} | Class: {_r['cls'].upper()} | APEX Score: {_r['pump_score']}/100 | R:R: {_r.get('rr',0)} | RSI: {_r.get('rsi',0):.1f}
-Entry zone: ${_r.get('entry_lo', _r.get('price',0)):.4f}–${_r.get('entry_hi', _r.get('price',0)):.4f} | SL: ${_r.get('sl',0):.4f} | TP: ${_r.get('tp',0):.4f}
-24h change: {_change24:+.1f}% | 24h volume: ${_vol24/1e6:.0f}M | Whale wall: ${_whale/1e6:.1f}M
-Funding rate: {f'{_funding*100:.4f}%' if _funding is not None else 'N/A'} | OI change 6h: {_oi_ch:+.1f}%
-Volume ratio: {_r.get('vol_ratio',1):.1f}× avg | Momentum confirmed: {_r.get('momentum_confirmed',False)} | Dual confirmed: {_r.get('dual_confirmed',False)}
-Signal breakdown: {', '.join([f'{k}:{v}pts' for k,v in _bd.items() if v and v>0])}
-Why scanner flagged it: {' | '.join(_reasons[:6]) if _reasons else 'N/A'}
-Warnings: {' | '.join(_warnings) if _warnings else 'None'}
-Catalyst narrative: {_cat_text if _cat_text else 'No matching catalyst found'}
-F&G penalty: {_r.get('_fg_penalty',0)}pts | Signal age: {_r.get('_age_min',0):.1f}min"""
-                _coin_blocks.append((_sym, _block))
-
-            # One API call — all coins together, holistic ranking
-            _all_blocks = "\n---".join([b for _, b in _coin_blocks])
-            _prompt = f"""You are a professional crypto futures trader. Analyse each signal holistically and rank them by trade priority.
-
-MARKET CONTEXT: {_btc_ctx}
-TRADING RULES: GATE exchange | window 06:00-15:00 UTC | min R:R 1.5 | avoid >30% 24h pumps | avoid conflicting signals
-
-SIGNALS TO ANALYSE:
-{_all_blocks}
-
-For each coin, read ALL the data — the reasons the scanner flagged it, the breakdown scores, warnings, catalyst narrative, funding rate, OI change, whale wall size, and volume. Give a genuine holistic verdict.
-
-Respond ONLY with a JSON array, no preamble, no markdown:
-[{{"symbol":"X","trade_confidence":85,"rank":1,"reason":"specific 1-line insight based on the actual data","avoid":false,"avoid_reason":"","key_edge":"the single strongest reason to take this trade","key_risk":"the single biggest risk"}}]
-
-Rules:
-- trade_confidence 0-100 based on ALL factors combined
-- avoid=true ONLY for genuine technical flaws (low volume, late entry, conflicting signals, warnings present)
-- Do NOT avoid based on direction alone
-- reason must reference actual data (e.g. "whale wall $8M + funding negative = squeeze setup" not generic)
-- key_edge and key_risk must be specific to this coin's data"""
-
-            _ar = _rq.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {_gk}", "Content-Type": "application/json"},
-                json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": _prompt}],
-                      "max_tokens": 1200, "temperature": 0.15},
-                timeout=25
-            )
-            if _ar.status_code == 200:
-                _raw = _ar.json()['choices'][0]['message']['content'].strip()
-                _raw = _raw.replace('```json','').replace('```','').strip()
-                _scored = _json_ai.loads(_raw)
-                _ai_scored = {item['symbol']: item for item in _scored}
-                st.session_state['ai_trade_scores'] = _ai_scored
-                st.session_state['ai_score_ts'] = _now_ts
-        except:
-            pass
+    # AI scoring now runs in pre-compute block above (before alert loop) so Discord gets it
 
     sq=[r for r in results if r['cls']=="squeeze"]
     br=[r for r in results if r['cls']=="breakout"]
@@ -7102,6 +7187,12 @@ if dst_should_run:
                 # Sort: 5m first then 15m, grouped by symbol
                 dst_signals = sorted(_all_dst_signals, key=lambda x: (x['symbol'], x.get('tf','5m')))
                 st.session_state['dst_results'] = dst_signals
+                # AI holistic analysis on DEMA signals
+                if dst_signals:
+                    _dst_ai = _ai_analyse_signals(dst_signals, scanner_type='DEMA')
+                    for _ds in dst_signals:
+                        _dsym = _ds.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+                        if _dsym in _dst_ai: _ds['_ai_data'] = _dst_ai[_dsym]
                 st.session_state['dst_last_scan'] = _dt_dst.now(_tz_dst.utc).strftime('%H:%M:%S')
                 st.session_state['dst_last_ts'] = time.time()
                 st.session_state['dst_scan_count'] = st.session_state.get('dst_scan_count', 0) + 1
@@ -7208,6 +7299,7 @@ if dst_results:
             _oc_badge = f'<span style="background:#fef2f2;color:#dc2626;border:1px solid #dc2626;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.55rem;font-weight:700;">❌ LOSS {_pnl_str}</span>'
         else:
             _oc_badge = ''
+        _dst_ai_badge = _render_ai_badge_html(sig.get('_ai_data', {}))
         st.markdown(f'''
         <div style="background:{dir_bg};border:1px solid {dir_border};border-left:4px solid {dir_color};border-radius:8px;padding:10px 14px;margin:6px 0;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
@@ -7219,6 +7311,7 @@ if dst_results:
             <span style="font-family:monospace;font-weight:800;font-size:.85rem;color:{dir_color};">🔵 {sig["symbol"]} — {sig["direction"]}</span>
             <span style="font-family:monospace;font-size:.65rem;color:#0284c7;font-weight:700;">R:R {sig["rr"]}</span>
           </div>
+          {_dst_ai_badge}
           <div style="display:flex;gap:14px;flex-wrap:wrap;">
             <span style="font-family:monospace;font-size:.65rem;color:#1e293b;">📍 Entry: <b>${sig["close"]:.6f}</b></span>
             <span style="font-family:monospace;font-size:.65rem;color:#059669;">🎯 TP: <b>${sig["tp"]:.6f}</b></span>
@@ -7408,7 +7501,14 @@ if _gl_pre_pending:
         if pre_signals:
             existing = st.session_state.get('gl_results', [])
             active_only = [s for s in existing if s.get('type') not in ['PRE_GAINER','PRE_LOSER']]
-            st.session_state['gl_results'] = active_only + pre_signals
+            _gl_all_new = active_only + pre_signals
+            # AI holistic analysis on G/L signals
+            if _gl_all_new:
+                _gl_ai = _ai_analyse_signals(_gl_all_new, scanner_type='GL')
+                for _gs in _gl_all_new:
+                    _gsym = _gs.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+                    if _gsym in _gl_ai: _gs['_ai_data'] = _gl_ai[_gsym]
+            st.session_state['gl_results'] = _gl_all_new
             for sig in pre_signals:
                 log_gl_signal(sig)
             if eff_s.get('discord_webhook'):
@@ -7628,12 +7728,14 @@ if gl_results:
         st.markdown(f'<div style="font-family:monospace;font-size:.65rem;font-weight:700;color:{color};padding:6px 0;">{first["emoji"]} {first["label"]} — {len(type_sigs)} signals</div>', unsafe_allow_html=True)
         for sig in type_sigs:
             tp_sl = f"🎯 TP: ${sig['tp']:.6f} | 🛑 SL: ${sig['sl']:.6f} | R:R {sig['rr']}" if sig.get('tp') else "👁 Watch for entry setup"
+            _gl_ai_badge = _render_ai_badge_html(sig.get('_ai_data', {}))
             st.markdown(f'''
             <div style="background:{bg};border:1px solid {border};border-left:4px solid {color};border-radius:8px;padding:10px 14px;margin:4px 0;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
                 <span style="font-family:monospace;font-weight:700;font-size:.78rem;color:{color};">{sig["emoji"]} {sig["symbol"]} — {sig["direction"]}</span>
                 <span style="font-family:monospace;font-size:.58rem;color:#64748b;">{sig.get("exchange","–")} • {sig.get("scan_time","–")} | {sig.get("scan_time_pkt","–")}</span>
               </div>
+              {_gl_ai_badge}
               <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:3px;">
                 <span style="font-family:monospace;font-size:.63rem;color:#1e293b;">4H: <b>{sig["chg_4h"]:+.2f}%</b></span>
                 <span style="font-family:monospace;font-size:.63rem;color:#1e293b;">1H: <b>{sig["chg_1h"]:+.2f}%</b></span>
