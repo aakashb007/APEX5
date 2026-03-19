@@ -225,6 +225,32 @@ DEFAULT_SETTINGS = {
     "pts_session":4,
 }
 
+def _is_crypto_symbol(sym):
+    """Return True if symbol is a crypto futures pair — filters out commodities, forex, indices."""
+    _EXCLUDE = {
+        # Metals & commodities
+        'XAU','XAG','XAUT','GOLD','SILVER','UKOIL','USOIL','BRENT','WTI',
+        'NATGAS','COPPER','PLATINUM','PALLADIUM','WHEAT','CORN','SOYBEAN',
+        # Forex
+        'EUR','GBP','JPY','AUD','CAD','CHF','NZD','CNY','CNH',
+        'KRW','SGD','HKD','MXN','RUB','TRY','ZAR','SEK','NOK',
+        # Stock indices
+        'SPX','SPY','NDX','QQQ','DJI','NIFTY','FTSE','DAX','NIKK',
+        'HSI','CSI','VIX','INDEX',
+        # Stablecoins & other non-crypto
+        'HALF','USDTUSDT','USDCUSDT','USDTUSD','FDUSD',
+    }
+    _EXCLUDE_PREFIXES = ('XAU','XAG','GOLD','SILVER','OIL','EUR','GBP','JPY')
+    try:
+        base = sym.split('/')[0].upper().strip()
+        if base in _EXCLUDE:
+            return False
+        if any(base.startswith(p) for p in _EXCLUDE_PREFIXES):
+            return False
+        return True
+    except:
+        return True
+
 def _get_groq_key():
     """Resolve Groq API key: st.secrets → apex_settings.json → empty string.
     st.secrets is set in Streamlit Cloud / GitHub secrets — never stored in code."""
@@ -1892,6 +1918,7 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
     ranked = []
     for sym, t in tickers.items():
         if not sym.endswith('/USDT:USDT'): continue
+        if not _is_crypto_symbol(sym): continue  # filter commodities/forex/indices
         pct = t.get('percentage') or t.get('change') or 0
         vol = t.get('quoteVolume') or 0
         if vol < 500000: continue  # skip low volume coins
@@ -3248,9 +3275,8 @@ class PrePumpScreener:
         _all_excluded = list(set(_COMMODITY_PATTERNS + _blacklist))
         def _is_crypto(sym):
             base = sym.split('/')[0].upper()
-            # Must end with :USDT to be a futures contract (already filtered above)
-            # Additional check: base must not match any excluded pattern
-            return not any(base == ex or base.startswith(ex) for ex in _all_excluded)
+            if base in _blacklist: return False  # user blacklist check
+            return _is_crypto_symbol(sym)  # shared filter handles all commodity/forex/index patterns
         _before = len(swaps_dict)
         swaps_dict = {sym: v for sym, v in swaps_dict.items() if _is_crypto(sym)}
         _filtered = _before - len(swaps_dict)
@@ -5554,7 +5580,8 @@ if nav=="📊 Backtest":
             _t100_status.markdown('<div style="font-family:monospace;font-size:.65rem;color:#2563eb;">📡 Fetching top coins by volume...</div>', unsafe_allow_html=True)
             _t100_tickers = _t100_ex.fetch_tickers()
             _t100_sorted = sorted(
-                [(s, t) for s, t in _t100_tickers.items() if s.endswith(':USDT') and t.get('quoteVolume', 0)],
+                [(s, t) for s, t in _t100_tickers.items()
+                 if s.endswith(':USDT') and t.get('quoteVolume', 0) and _is_crypto_symbol(s)],
                 key=lambda x: float(x[1].get('quoteVolume', 0) or 0),
                 reverse=True
             )[:_t100_top_n]
@@ -6472,6 +6499,9 @@ eff_s.update({'scan_depth':q_depth,'min_score':q_min,'btc_filter':q_btc,'require
 col_btn,col_status=st.columns([2,5])
 with col_btn: do_scan=st.button("⚡  RUN PUMP/DUMP SCAN",use_container_width=True)
 if eff_s.get('auto_scan'): do_scan=True; time.sleep(0.3)
+# _now_ts defined here globally so all blocks (if/else/try/except) can use it safely
+import time as _time_global
+_now_ts = _time_global.time()
 # Show instant feedback so user knows button was received
 if do_scan:
     with col_status:
@@ -6546,6 +6576,7 @@ if do_scan:
         # ── Pre-compute freshness + F&G + AI scores BEFORE alerts fire ──────
         import time as _time_pre, datetime as _dt_pre_mod
         _now_unix_pre = _time_pre.time()  # Unix timestamp (seconds since epoch)
+        # _now_ts already defined globally above do_scan block
         _fng_pre = st.session_state.get('fng_val', 50)
         for _r in st.session_state.results:
             try:
@@ -6582,7 +6613,10 @@ if do_scan:
 
         # ── AI Holistic Scoring — runs HERE so _ai_data is ready when Discord fires ──
         _ai_last_ts = st.session_state.get('ai_score_ts', 0)
-        _ai_stale = (_now_ts - _ai_last_ts) > 300
+        # Always re-score on a fresh scan (scan_count just incremented) OR if stale > 5min
+        _scan_count_now = st.session_state.get('scan_count', 0)
+        _ai_last_scan = st.session_state.get('ai_score_scan', -1)
+        _ai_stale = (_scan_count_now != _ai_last_scan) or ((_now_ts - _ai_last_ts) > 300)
         _gk_pre = _get_groq_key()
         if st.session_state.results and _ai_stale and _gk_pre:
             try:
@@ -6639,6 +6673,7 @@ if do_scan:
                     _new_ai_scores = {item['symbol']: item for item in _scored_pre}
                     st.session_state['ai_trade_scores'] = _new_ai_scores
                     st.session_state['ai_score_ts'] = _now_ts
+                    st.session_state['ai_score_scan'] = _scan_count_now
                     # Inject immediately into results so Discord alert has them
                     for _r in st.session_state.results:
                         _sym_r = _r['symbol'].replace('/USDT:USDT','').replace('/USDT','').upper()
@@ -6855,7 +6890,7 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
             if not isinstance(res_tk[2],Exception): tk_gate=res_tk[2]
             all_swaps={}
             for sym,t in {**tk_mexc,**tk_gate,**tk_okx}.items():
-                if sym.endswith(':USDT') and t.get('quoteVolume'):
+                if sym.endswith(':USDT') and t.get('quoteVolume') and _is_crypto_symbol(sym):
                     exn='OKX' if sym in tk_okx else ('GATE' if sym in tk_gate else 'MEXC')
                     exo=screener.okx if exn=='OKX' else (screener.gate if exn=='GATE' else screener.mexc)
                     all_swaps[sym]={'vol':float(t['quoteVolume'] or 0),'exch_name':exn,'exch_obj':exo}
@@ -7029,7 +7064,7 @@ if not results:
 else:
     # ── Freshness decay ──────────────────────────────────────────────────────
     import time as _time
-    _now_ts = _time.time()
+    # _now_ts already defined globally above
     for _r in results:
         try:
             import datetime
