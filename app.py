@@ -175,7 +175,7 @@ DEFAULT_SETTINGS = {
     "dst_fresh_bars":10,"dst_sl_atr":2.0,"dst_tp_atr":4.0,
     "dst_confirm_boost":8,"dst_conflict_penalty":5,
     "dst_timeframe":"5m","dst_min_rr":1.5,"dst_min_score":3,
-    "dst_auto_scan":False,"dst_interval":5,
+    "dst_auto_scan":False,"dst_interval":5,"dst_multi_tf":True,
     "dst_use_trail":False,"dst_trail_atr":2.50,
     "dst_partial":True,"dst_partial_pct":50,"dst_partial_rr":2.0,
     "dst_breakeven":True,"dst_be_rr":1.5,
@@ -507,10 +507,9 @@ def log_trade(res, force=False):
             if key and bd.get(key, 0) <= 0: return
 
        # ── Required Technicals (professional filters) ────────────────────
-        if s.get('req_4h_fvg', False):
-            if not any('FVG' in str(r) for r in res.get('reasons', [])): return
-        if s.get('req_4h_ob', False):
-            if bd.get('ob_imbalance', 0) <= 0: return
+        # NOTE: req_4h_fvg and req_4h_ob intentionally NOT applied here
+        # Journal logs ALL signals that pass score+class — technicals only gate Discord alerts
+        # This ensures the journal captures every qualifying signal for later analysis
         if s.get('req_5m_align', False):
             if bd.get('mtf', 0) <= 0: return
         if s.get('req_ob', False):
@@ -1942,7 +1941,7 @@ def send_dst_discord_alert(webhook_url, sig):
         color = 0x0284c7  # blue for DST signals
         direction_emoji = "📗" if sig['direction'] == 'LONG' else "📕"
         embed = {
-            'title': f'🔵 DEMA+ST | {sig["symbol"]} ({sig["exchange"]}) — {sig["tf"]}',
+            'title': f'🔵 DEMA+ST [{sig.get("tf","5m").upper()}] | {sig["symbol"]} ({sig["exchange"]})',
             'color': color,
             'description': (
                 f"{direction_emoji} **{sig['direction']}** | R:R **{sig['rr']}**\n"
@@ -6704,32 +6703,83 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
                 if ak not in st.session_state.alerted_sigs:
                     _p=float(r.get('price') or 0); _t=float(r.get('tp') or 0); _s_=float(r.get('sl') or 0)
                     rr_r=f"{abs(_t-_p)/abs(_p-_s_):.1f}:1" if abs(_p-_s_)>0 else "N/A"
-                    # All reasons for sentinel alert too
-                    rsns="\n".join([f"• {x}" for x in r['reasons']])
                     sig_line_sent="📗 LONG" if r['type']=='LONG' else "📕 SHORT"
                     _tp1=float(r.get('tp1') or _t); _tp2=float(r.get('tp2') or _t); _tp3=float(r.get('tp3') or _t)
                     _elo=float(r.get('entry_lo') or _p); _ehi=float(r.get('entry_hi') or _p)
+                    rsi_arrow_s = " 🔺" if float(r.get('rsi',50))>55 else (" 🔻" if float(r.get('rsi',50))<45 else "")
+                    # ── AI score ─────────────────────────────────────────
+                    _s_sym = r.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
+                    _s_ai = r.get('_ai_data') or st.session_state.get('ai_trade_scores',{}).get(_s_sym,{})
+                    _s_ai_line = ""
+                    if _s_ai:
+                        _s_rank=_s_ai.get('rank',99); _s_conf=_s_ai.get('trade_confidence',0)
+                        _s_reason=_s_ai.get('reason',''); _s_avoid=_s_ai.get('avoid',False)
+                        if _s_rank==1 and not _s_avoid:
+                            _s_ai_line = f"\n🎯 **BEST SETUP** — AI Score: {_s_conf}/100 · {_s_reason}"
+                        elif _s_avoid:
+                            _s_ai_line = f"\n⛔ **AI: AVOID** — {_s_ai.get('avoid_reason','')}"
+                        else:
+                            _s_ai_line = f"\n🤖 AI Score: {_s_conf}/100 · Rank #{_s_rank} · {_s_reason}"
+                    # ── Freshness + F&G ───────────────────────────────────
+                    _s_age = r.get('_age_min', 0)
+                    _s_fresh_line = f"\n⏱ Signal age: {_s_age}m" if _s_age > 0 else ""
+                    _s_fg_line = f"\n⚠️ {r.get('_fg_note','')}" if r.get('_fg_note') else ""
+                    # ── Narrative confirmation ────────────────────────────
+                    _s_narr_line = ""
+                    _cat_results = st.session_state.get('cat_results', [])
+                    for _cat in _cat_results:
+                        if _s_sym in str(_cat.get('coin','')).upper():
+                            _s_narr_line = f"\n📰 **Narrative:** {_cat.get('catalyst','')[:80]}"
+                            break
+                    # ── DEMA+ST confirmation ──────────────────────────────
+                    _s_dst = r.get('dst_signal'); _s_dst_conf = r.get('dst_confirmed', False)
+                    if _s_dst_conf and _s_dst:
+                        _s_dst_line = f"\n🔵 **DEMA+ST CONFIRMED** ✅ | DIR: {_s_dst['direction']} | RSI: {_s_dst['rsi']} | VOL: {_s_dst['vol_ratio']}× | ST flip: {_s_dst['fresh_bars']} bars ago"
+                    elif _s_dst and not _s_dst_conf:
+                        _s_dst_line = f"\n🔵 **DEMA+ST CONFLICT** ⚠️ | DEMA says {_s_dst['direction']} (opposite to APEX)"
+                    else:
+                        _s_dst_line = ""
+                    # ── Signal breakdown pips ─────────────────────────────
+                    _s_bd = r.get('signal_breakdown', {})
+                    _s_pips = " | ".join([f"{k.replace('_',' ').title()}: {v}" for k,v in _s_bd.items() if v and v>0])
+                    # ── OI / Sentiment ────────────────────────────────────
+                    _s_oi = r.get('oi_change_6h', 0)
+                    _s_sent = r.get('sentiment', {})
+                    _s_oi_line = f"\n**OI 6h:** {_s_oi:+.1f}%" if abs(_s_oi)>=5 else ""
+                    _s_sent_line = (f"\n{_s_sent.get('source','')} L/S: {_s_sent['top_long_pct']:.0f}%/{_s_sent['top_short_pct']:.0f}% | Taker: {_s_sent['taker_buy_pct']:.0f}%") if _s_sent.get('available') else ""
+                    _s_warn_line = f"\n⚠️ " + ' | '.join(r.get('warnings',[])) if r.get('warnings') else ""
+                    _s_dual_line = "🔥 **DUAL CONFIRMED** — Scanner + Sentinel both flagged\n" if r.get('dual_confirmed') else ""
+                    # ── Description ───────────────────────────────────────
+                    _s_desc = (f"{_s_dual_line}{sig_line_sent} | Score: **{r['pump_score']}/100**\n"
+                               f"**Exchange:** {r.get('exchange','')} | **Class:** {r.get('cls','').upper()} | **RSI:** {r.get('rsi',0):.1f}{rsi_arrow_s} | **R:R:** {rr_r}\n"
+                               f"📍 Entry Zone: `${_elo:.6f}`–`${_ehi:.6f}`\n"
+                               f"🎯 TP1: `${_tp1:.6f}` | TP2: `${_tp2:.6f}` | TP3: `${_tp3:.6f}`\n"
+                               f"🛑 SL: `${_s_:.6f}`"
+                               + _s_dst_line + _s_ai_line + _s_fresh_line + _s_fg_line
+                               + _s_narr_line + _s_oi_line + _s_sent_line + _s_warn_line)
                     if eff_s.get('tg_token') and eff_s.get('tg_chat_id'):
+                        rsns="\n".join([f"• {x}" for x in r['reasons']])
                         send_tg(eff_s['tg_token'],eff_s['tg_chat_id'],
                             f"<b>🛰️ [SENTINEL] {sig_line_sent} | Score: {r['pump_score']}/100</b>\n"
                             f"<b>{r['symbol']} — {r.get('cls','').upper()} | {r.get('exchange','')}</b>\n"
-                            f"R:R {rr_r}\n"
+                            f"R:R {rr_r} | RSI: {r.get('rsi',0):.1f}\n"
                             f"📍 Entry Zone: ${_elo:.6f}–${_ehi:.6f}\n"
-                            f"TP1: ${_tp1:.6f} | TP2: ${_tp2:.6f} | TP3: ${_tp3:.6f}\n"
+                            f"🎯 TP1: ${_tp1:.6f} | TP2: ${_tp2:.6f} | TP3: ${_tp3:.6f}\n"
                             f"🛑 SL: ${_s_:.6f}\n\n"
                             f"📝 All Reasons:\n{rsns}")
                     if eff_s.get('discord_webhook'):
                         dc_color_s=0x059669 if r['type']=='LONG' else 0xdc2626
+                        rsns_str="\n".join([f"▸ {x}" for x in r['reasons']])
+                        _s_fields=[{'name':f'📊 Signal Breakdown','value':_s_pips[:1024] or '—','inline':False},
+                                   {'name':f'📝 All Reasons ({len(r["reasons"])})','value':rsns_str[:1024],'inline':False}]
+                        if len(rsns_str)>1024:
+                            _s_fields.append({'name':'📝 Reasons (cont.)','value':rsns_str[1024:2048],'inline':False})
                         send_discord(eff_s['discord_webhook'],{
-                            "title":f"🛰️ SENTINEL: {r['symbol']} ({r['pump_score']}/100)",
-                            "color":dc_color_s,
-                            "description":(f"{'📗 **LONG**' if r['type']=='LONG' else '📕 **SHORT**'} | Score: **{r['pump_score']}/100**\n"
-                                           f"**Exchange:** {r.get('exchange','')} | **Class:** {r.get('cls','').upper()} | **R:R:** {rr_r}\n"
-                                           f"📍 Entry Zone: `${_elo:.6f}`–`${_ehi:.6f}`\n"
-                                           f"TP1: `${_tp1:.6f}` | TP2: `${_tp2:.6f}` | TP3: `${_tp3:.6f}`\n"
-                                           f"🛑 SL: `${_s_:.6f}`"),
-                            "fields":[{'name':f'📝 All Reasons ({len(r["reasons"])})','value':"\n".join([f"▸ {x}" for x in r['reasons']])[:1024],'inline':False}],
-                            "footer":{"text":f"APEX Sentinel — Top 100 | {_dual_time()[0]} | {_dual_time()[1]}"}})
+                            'title':f"🛰️ SENTINEL: {r['symbol']} ({r.get('cls','').upper()}) — {r.get('exchange','')}",
+                            'color':dc_color_s,
+                            'description':_s_desc,
+                            'fields':_s_fields,
+                            'footer':{'text':f"APEX Sentinel — Top 100 | {_dual_time()[0]} | {_dual_time()[1]}"}})
                     st.session_state.alerted_sigs.add(ak)
 
         chk_f=st.session_state.get('sentinel_total_checked',0)
@@ -6932,15 +6982,19 @@ trade_confidence: 0-100. avoid: true if this signal should be skipped entirely. 
 # ── DST ISOLATED SCANNER SECTION ─────────────────────────────────────────
 st.markdown('---')
 st.markdown('<div class="scanner-section-label">🔵 DEMA+ST INDEPENDENT SCANNER</div>', unsafe_allow_html=True)
-st.markdown('<div style="font-family:monospace;font-size:.58rem;background:var(--green-bg);border:1px solid var(--green-bd);border-radius:5px;padding:5px 10px;margin-bottom:6px;color:var(--green);">📡 Candle data: <b>MEXC Futures</b> (83% win rate match) · Trade execution on your selected exchange</div>', unsafe_allow_html=True)
+st.markdown('<div style="font-family:monospace;font-size:.58rem;background:var(--green-bg);border:1px solid var(--green-bd);border-radius:5px;padding:5px 10px;margin-bottom:6px;color:var(--green);">📡 Candle data: <b>MEXC Futures</b> (83% win rate match) · Scans <b>5m + 15m</b> simultaneously · Trade execution on your selected exchange</div>', unsafe_allow_html=True)
 
-dst_col1, dst_col2, dst_col3 = st.columns([2,2,4])
+dst_col1, dst_col2, dst_col3, dst_col4 = st.columns([2,2,2,3])
 with dst_col1:
     dst_run = st.button("▶ Run Now", use_container_width=True)
 with dst_col2:
     dst_interval = st.number_input("Interval (min)", 1, 60, int(eff_s.get('dst_interval', 5)), key='dst_interval_input')
 with dst_col3:
-    st.markdown(f'<div style="font-family:monospace;font-size:.6rem;color:#64748b;padding-top:8px;">Last scan: {st.session_state.get("dst_last_scan","–")} | Signals found: {len(st.session_state.get("dst_results",[]))} | 🟢 Auto-running every {int(eff_s.get("dst_interval",5))} min</div>', unsafe_allow_html=True)
+    # Multi-TF toggle
+    _dst_multi_tf = st.checkbox("5m + 15m + 1h", value=eff_s.get('dst_multi_tf', True), key='dst_multi_tf_toggle',
+        help="Scan 5m, 15m and 1h timeframes simultaneously. Each signal card shows which TF it's from.")
+with dst_col4:
+    st.markdown(f'<div style="font-family:monospace;font-size:.6rem;color:#64748b;padding-top:8px;">Last scan: {st.session_state.get("dst_last_scan","–")} | Signals found: {len(st.session_state.get("dst_results",[]))} | 🟢 Auto every {int(eff_s.get("dst_interval",5))} min</div>', unsafe_allow_html=True)
 
 # Auto-run on startup and every dst_interval minutes
 dst_last_ts = st.session_state.get('dst_last_ts', 0)
@@ -6964,13 +7018,29 @@ if dst_should_run:
         coin_list = _DST_DEFAULT_COINS
         st.info(f"ℹ️ Using default watchlist ({len(coin_list)} coins). Run APEX scan for a dynamic list.")
     if coin_list:
-        with st.spinner(f"🔵 DEMA+ST scanning {len(coin_list)} coins on {eff_s.get('dst_timeframe','5m')}..."):
+        # Determine timeframes to scan — multi-TF if enabled
+        _dst_tfs_to_scan = ['5m', '15m', '1h'] if _dst_multi_tf else [eff_s.get('dst_timeframe', '5m')]
+        with st.spinner(f"🔵 DEMA+ST scanning {len(coin_list)} coins on {' + '.join(_dst_tfs_to_scan)}..."):
             try:
                 from datetime import datetime as _dt_dst, timezone as _tz_dst
                 exchange_clients = _get_exchange_clients()
                 _dummy = {  # keep dict style for compatibility
                 }
-                dst_signals = run_dst_scan(coin_list, eff_s, exchange_clients)
+                _all_dst_signals = []
+                _seen_dst_keys = set()
+                for _dst_tf_now in _dst_tfs_to_scan:
+                    _eff_s_tf = {**eff_s, 'dst_timeframe': _dst_tf_now}
+                    _sigs_tf = run_dst_scan(coin_list, _eff_s_tf, exchange_clients)
+                    for _sg in _sigs_tf:
+                        _sg['tf'] = _dst_tf_now
+                        _tf_labels = {'5m':'⏱ 5M SIGNAL','15m':'⏱ 15M SIGNAL','1m':'⏱ 1M SIGNAL','1h':'⏱ 1H SIGNAL','4h':'⏱ 4H SIGNAL'}
+                        _sg['tf_label'] = _tf_labels.get(_dst_tf_now, f'⏱ {_dst_tf_now.upper()} SIGNAL')
+                        _dk = f"{_sg['symbol']}_{_sg['direction']}_{_dst_tf_now}"
+                        if _dk not in _seen_dst_keys:
+                            _seen_dst_keys.add(_dk)
+                            _all_dst_signals.append(_sg)
+                # Sort: 5m first then 15m, grouped by symbol
+                dst_signals = sorted(_all_dst_signals, key=lambda x: (x['symbol'], x.get('tf','5m')))
                 st.session_state['dst_results'] = dst_signals
                 st.session_state['dst_last_scan'] = _dt_dst.now(_tz_dst.utc).strftime('%H:%M:%S')
                 st.session_state['dst_last_ts'] = time.time()
@@ -7050,33 +7120,64 @@ if dst_should_run:
 # Display DST results
 dst_results = st.session_state.get('dst_results', [])
 if dst_results:
-    st.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#0284c7;padding:4px 0;">🔵 {len(dst_results)} DEMA+ST signals — {st.session_state.get("dst_last_scan","–")} UTC</div>', unsafe_allow_html=True)
+    # Group by timeframe for display
+    _dst_5m = [s for s in dst_results if s.get('tf','5m') == '5m']
+    _dst_15m = [s for s in dst_results if s.get('tf','') == '15m']
+    _dst_1h = [s for s in dst_results if s.get('tf','') == '1h']
+    _all_grouped = [('5m', _dst_5m), ('15m', _dst_15m)] + [('other', _dst_other)] if _dst_other else [('5m', _dst_5m), ('15m', _dst_15m)]
+
+    _counts_str = " · ".join([f"{tf.upper()}: {len(sigs)}" for tf, sigs in [('5m',_dst_5m),('15m',_dst_15m),('1h',_dst_1h)] if sigs])
+    st.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#0284c7;padding:4px 0;margin-bottom:4px;">🔵 <b>{len(dst_results)} DEMA+ST signals</b> — {_counts_str} — {st.session_state.get("dst_last_scan","–")} UTC</div>', unsafe_allow_html=True)
+
     for sig in dst_results:
         dir_color = "#059669" if sig['direction'] == 'LONG' else "#dc2626"
         dir_bg = "#f0fdf4" if sig['direction'] == 'LONG' else "#fef2f2"
         dir_border = "#86efac" if sig['direction'] == 'LONG' else "#fca5a5"
+        # TF badge styling
+        _sig_tf = sig.get('tf', '5m')
+        _tf_colors = {'5m': ('#2563eb','#eff6ff'), '15m': ('#7c3aed','#f5f3ff'), '1m': ('#0891b2','#ecfeff'), '1h': ('#d97706','#fffbeb'), '4h': ('#dc2626','#fef2f2')}
+        _tf_fg, _tf_bg = _tf_colors.get(_sig_tf, ('#2563eb','#eff6ff'))
+        _tf_label = sig.get('tf_label', f'⏱ {_sig_tf.upper()} SIGNAL')
+        # Outcome badge
+        _oc = sig.get('outcome', 'OPEN')
+        _pnl = sig.get('pnl_pct')
+        _pnl_str = (f'+{_pnl}%' if _pnl and _pnl > 0 else f'{_pnl}%') if _pnl is not None else ''
+        if _oc == 'WIN':
+            _oc_badge = f'<span style="background:#f0fdf4;color:#059669;border:1px solid #059669;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.55rem;font-weight:700;">✅ WIN {_pnl_str}</span>'
+        elif _oc == 'LOSS':
+            _oc_badge = f'<span style="background:#fef2f2;color:#dc2626;border:1px solid #dc2626;border-radius:4px;padding:1px 7px;font-family:monospace;font-size:.55rem;font-weight:700;">❌ LOSS {_pnl_str}</span>'
+        else:
+            _oc_badge = ''
         st.markdown(f'''
         <div style="background:{dir_bg};border:1px solid {dir_border};border-left:4px solid {dir_color};border-radius:8px;padding:10px 14px;margin:6px 0;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <span style="font-family:monospace;font-weight:700;font-size:.8rem;color:{dir_color};">🔵 {sig["symbol"]} — {sig["direction"]}</span>
-            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">{sig.get("exchange","–")} • {sig.get("tf","5m")} • {sig.get("scan_time","–")} | {sig.get("scan_time_pkt","–")}</span>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+            <span style="font-family:monospace;font-size:.6rem;font-weight:800;background:{_tf_bg};color:{_tf_fg};border:1px solid {_tf_fg};border-radius:4px;padding:2px 10px;letter-spacing:.05em;">{_tf_label}</span>
+            {_oc_badge}
+            <span style="font-family:monospace;font-size:.55rem;color:#64748b;margin-left:auto;">{sig.get("exchange","–")} • {sig.get("scan_time","–")} UTC | {sig.get("scan_time_pkt","–")} PKT</span>
           </div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-family:monospace;font-weight:800;font-size:.85rem;color:{dir_color};">🔵 {sig["symbol"]} — {sig["direction"]}</span>
+            <span style="font-family:monospace;font-size:.65rem;color:#0284c7;font-weight:700;">R:R {sig["rr"]}</span>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;">
             <span style="font-family:monospace;font-size:.65rem;color:#1e293b;">📍 Entry: <b>${sig["close"]:.6f}</b></span>
             <span style="font-family:monospace;font-size:.65rem;color:#059669;">🎯 TP: <b>${sig["tp"]:.6f}</b></span>
-            <span style="font-family:monospace;font-size:.65rem;color:#dc2626;">🛑 SL: <b>${sig["sl"]:.6f}</b></span>
-            <span style="font-family:monospace;font-size:.65rem;color:#0284c7;">R:R <b>{sig["rr"]}</b></span>
+            <span style="font-family:monospace;font-size:.65rem;color:#dc2626;">🛑 SL (ST line): <b>${sig["sl"]:.6f}</b></span>
           </div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
-            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">RSI: {sig["rsi"]}</span>
-            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">VOL: {sig["vol_ratio"]}×</span>
-            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">ST flip: {sig["fresh_bars"]} bars ago</span>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:3px;">
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">TP1: ${sig["tp1"]:.6f}</span>
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">TP2: ${sig["tp2"]:.6f}</span>
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">TP3: ${sig["tp3"]:.6f}</span>
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;padding-top:4px;border-top:1px solid {dir_border};">
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">RSI: <b>{sig["rsi"]}</b></span>
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">VOL: <b>{sig["vol_ratio"]}×</b></span>
+            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">ST flip: <b>{sig["fresh_bars"]} bars ago</b></span>
             <span style="font-family:monospace;font-size:.6rem;color:#64748b;">DEMA: ${sig["dema"]:.6f}</span>
-            <span style="font-family:monospace;font-size:.6rem;color:#64748b;">TP1: ${sig["tp1"]:.6f} | TP2: ${sig["tp2"]:.6f} | TP3: ${sig["tp3"]:.6f}</span>
           </div>
         </div>''', unsafe_allow_html=True)
 else:
-    st.markdown('<div style="font-family:monospace;font-size:.65rem;color:#94a3b8;padding:8px 0;">🔵 No DEMA+ST signals yet — click Run DEMA+ST Scan</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.65rem;color:#94a3b8;padding:8px 0;">🔵 No DEMA+ST signals yet — click ▶ Run Now or wait for auto-scan</div>', unsafe_allow_html=True)
 # ── MARKET SENTIMENT DASHBOARD ────────────────────────────────────────────
 st.markdown('---')
 st.markdown('<div class="scanner-section-label">🌍 MARKET PULSE</div>', unsafe_allow_html=True)
