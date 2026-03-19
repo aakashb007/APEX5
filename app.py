@@ -215,7 +215,7 @@ DEFAULT_SETTINGS = {
     # ── S18: API Keys ──
     "tg_token":"","tg_chat_id":"",
     "discord_webhook":"https://discord.com/api/webhooks/1476606856599179265/74wKbIJEXNJ9h10Ab0Q9Vp7ZmeJ52XY18CP3lKxg3eR1BbpZSdX65IT8hbZjpEIXSqEg",
-    "groq_key":"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","cmc_key":"",
+    "groq_key":"","cmc_key":"",
     "okx_key":"","okx_secret":"","okx_passphrase":"",
     "gate_key":"","gate_secret":"",
 
@@ -224,6 +224,24 @@ DEFAULT_SETTINGS = {
     "cooldown_on":True,"cooldown_hrs":4,
     "pts_session":4,
 }
+
+def _get_groq_key():
+    """Resolve Groq API key: st.secrets → apex_settings.json → empty string.
+    st.secrets is set in Streamlit Cloud / GitHub secrets — never stored in code."""
+    try:
+        k = st.secrets.get("GROQ_API_KEY", "")
+        if k and k.strip():
+            return k.strip()
+    except Exception:
+        pass
+    try:
+        s = load_settings()
+        k = (s.get("groq_key") or "").strip()
+        if k:
+            return k
+    except Exception:
+        pass
+    return ""
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_settings():
@@ -5589,7 +5607,7 @@ if nav=="🧠 Catalyst":
     st.markdown('<div class="section-h">🧠 Catalyst Intelligence — AI Narrative Scanner</div>', unsafe_allow_html=True)
     st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:12px;">Powered by Groq LLaMA 3.1 · Identifies narrative-driven pump catalysts · Cross-validates with APEX signals</div>', unsafe_allow_html=True)
 
-    groq_key = (S.get('groq_key','') or "").strip() or "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"
+    groq_key = _get_groq_key()
 
     cat_col1, cat_col2, cat_col3 = st.columns([2,2,4])
     with cat_col1:
@@ -6139,7 +6157,7 @@ if nav=="🔍 Coin Analyzer":
                 # ── AI verdict via Groq ───────────────────────────────────
                 _ai_verdict = ""
                 try:
-                    _gk = (S.get('groq_key','') or "").strip() or "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"
+                    _gk = _get_groq_key()
                     _ca_prompt = f"""You are a professional crypto futures trader. Analyze this coin and give a direct trading verdict.
 
 COIN: {_ca_coin}/USDT perpetual on {_ca_exch}
@@ -6421,20 +6439,20 @@ if do_scan:
                 r['dual_confirmed']=False
 
         # ── Pre-compute freshness + F&G + AI scores BEFORE alerts fire ──────
-        import time as _time_pre
-        _now_pre = _time_pre.time()
+        import time as _time_pre, datetime as _dt_pre_mod
+        _now_unix_pre = _time_pre.time()  # Unix timestamp (seconds since epoch)
         _fng_pre = st.session_state.get('fng_val', 50)
         for _r in st.session_state.results:
             try:
-                import datetime as _dt_mod
                 _st_str = _r.get('scan_time','')
                 if _st_str:
-                    _dt_parsed = _dt_mod.datetime.strptime(_st_str[:19], '%Y-%m-%d %H:%M:%S')
-                    _age = (_now_pre - _dt_parsed.replace(tzinfo=_dt_mod.timezone.utc).timestamp()) / 60
+                    _dt_parsed = _dt_pre_mod.datetime.strptime(_st_str[:19], '%Y-%m-%d %H:%M:%S')
+                    _dt_unix = _dt_parsed.replace(tzinfo=_dt_pre_mod.timezone.utc).timestamp()
+                    _age = max(0.0, (_now_unix_pre - _dt_unix) / 60.0)
                 else:
-                    _age = 0
+                    _age = 0.0
             except:
-                _age = 0
+                _age = 0.0
             _r['_age_min'] = round(_age, 1)
             _decay = max(0, min(20, (_age - 5) * 2)) if _age > 5 else 0
             _r['_decayed_score'] = max(0, _r['pump_score'] - _decay)
@@ -6596,7 +6614,7 @@ if do_scan:
                         # ── Freshness + F&G note ──────────────────────────
                         _dc_age = r.get('_age_min', 0)
                         _dc_fg_note = r.get('_fg_note','')
-                        _dc_fresh_line = f"\n⏱ Signal age: {_dc_age}m" if _dc_age > 0 else ""
+                        _dc_fresh_line = f"\n⏱ Signal age: {_dc_age:.1f}m" if _dc_age >= 0 else ""
                         _dc_fg_line = f"\n⚠️ {_dc_fg_note}" if _dc_fg_note else ""
                         stats_text=(f"{dual_line}\n{sig_hdr}\n"
                                     f"**Exchange:** {r.get('exchange','MEXC')} | **RSI:** {r.get('rsi',0):.1f}{rsi_arrow} | **R:R:** {rr_ratio}\n"
@@ -6871,7 +6889,7 @@ else:
     if results and _ai_stale and st.session_state.get('groq_key','') or (results and _ai_stale):
         try:
             import requests as _rq
-            _gk = (S.get('groq_key','') or "").strip() or "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"
+            _gk = _get_groq_key()
             _sig_list = []
             for _r in results[:8]:
                 _sig_list.append({
@@ -6895,7 +6913,7 @@ else:
                     )
                 })
             _btc_ctx = f"BTC trend: {st.session_state.get('btc_trend','NEUTRAL')}, F&G: {_fng} ({st.session_state.get('fng_txt','Neutral')})"
-            _checklist = "Pre-trade rules: GATE exchange preferred, LONG direction preferred, trade window 06:00-15:00 UTC, avoid low R:R"
+            _checklist = "Pre-trade rules: GATE exchange preferred, trade window 06:00-15:00 UTC, avoid low R:R (<1.5), avoid signals with extreme late entry (24h change >30%)"
             _prompt = f"""You are a crypto futures trading advisor. Rank these signals by trade priority.
 
 Market context: {_btc_ctx}
@@ -6907,7 +6925,8 @@ Signals:
 Respond ONLY with a JSON array ranked best-to-worst. No preamble, no markdown:
 [{{"symbol":"X","trade_confidence":85,"rank":1,"reason":"one line why this is best setup","avoid":false,"avoid_reason":""}}]
 
-trade_confidence: 0-100. avoid: true if this signal should be skipped entirely. Keep reasons under 10 words."""
+trade_confidence: 0-100. 
+avoid: true ONLY if the signal has a clear technical flaw (e.g. low volume, extreme late entry, conflicting indicators). Do NOT set avoid=true just because of direction (LONG or SHORT). Keep reasons under 10 words."""
 
             _ar = _rq.post(
                 "https://api.groq.com/openai/v1/chat/completions",
