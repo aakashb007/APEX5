@@ -179,7 +179,7 @@ DEFAULT_SETTINGS = {
     "dst_use_trail":False,"dst_trail_atr":2.50,
     "dst_partial":True,"dst_partial_pct":50,"dst_partial_rr":2.0,
     "dst_breakeven":True,"dst_be_rr":1.5,
-    "dst_watchlist":["SOL","BTC","ETH","DOGE","XRP","BNB","ADA","AVAX","LINK","DOT","ARB","OP","NEAR","APT","SUI","HYPE","WIF","PEPE","INJ","TIA","SEI","JUP","AAVE","RUNE","ENA"],"dst_use_watchlist":True,
+    "dst_watchlist":["NEAR","VVV","BEAT","UNI","PIPPIN","ENA","XPL","HYPE","DOGE","BCH","ETH","BTC","SOL","XAN","LUNC","SHIB","LTC","TONCOIN","EIGEN","AAVE"],"dst_use_watchlist":True,
 
     # ── S15: Professional Filters ──
     "kill_switch_on":True,
@@ -4095,17 +4095,43 @@ if nav=="⚙️ Settings":
             "MKR","YFI","SUSHI","1INCH","BAL","REN","UMA","ZRX","LRC","DYDX",
             "GMX","GNS","PERP","BLUR","APE","LOOKS","IMX","GODS","BEAM","MAGIC",
             "RUNE","LUNA","OSMO","JUNO","SCRT","ROWAN","AKT","STARS","EVMOS","CRO",
-            "OKB","HT","KCS","GT","MX","WOO","DODO","RDNT","STG","PENDLE"
+            "OKB","HT","KCS","GT","MX","WOO","DODO","RDNT","STG","PENDLE",
+            # Added from backtest results
+            "HYPE","ENA","VVV","BEAT","PIPPIN","XPL","XAN","NIGHT","LUNC","WLFI",
+            "SAHARA","RENDER","EIGEN","TONCOIN","PENGU","MUSTOCK","VIRTUAL","SIREN",
+            "ETHFI","ASTER","TAO","TRIA","MNT","FF","BAN","LYN","PI","NGAS",
+            "DEGO","UAI","LIT","XMR","ZEN","ZRO","RIVER","CC","MYX","FARTCOIN",
+            "ONDO","PUMPFUN","PIXEL","1000BONK","TRUMPOFFICIAL","CRCLSTOCK",
         ]
-        TOP_100_FUTURES.sort()
+        TOP_100_FUTURES = sorted(list(set(TOP_100_FUTURES)))
+
+        # Saved custom coins — any coin not in the preset list
+        _saved_wl = S.get('dst_watchlist', [])
+        _custom_saved = [c for c in _saved_wl if c not in TOP_100_FUTURES]
+
         ns_dst_watchlist = st.multiselect(
-            "Select coins to watch (saved on Submit)",
+            "Select from preset list",
             options=TOP_100_FUTURES,
-            default=[c for c in S.get('dst_watchlist', []) if c in TOP_100_FUTURES],
+            default=[c for c in _saved_wl if c in TOP_100_FUTURES],
             key='dst_wl_multiselect'
         )
+
+        # Free-text input for any coin not in the preset list
+        _custom_default = ", ".join(_custom_saved)
+        _custom_input = st.text_input(
+            "➕ Add custom coins (comma separated, e.g. VVV, BEAT, PIPPIN)",
+            value=_custom_default,
+            key='dst_wl_custom',
+            placeholder="e.g. VVV, BEAT, XAN, NEAR — any futures coin on MEXC"
+        )
+        st.markdown('<div class="setting-help">Type any coin symbol that trades as a USDT futures pair on MEXC. Uppercase only.</div>', unsafe_allow_html=True)
+
+        # Merge preset + custom into final watchlist
+        _custom_coins = [c.strip().upper() for c in _custom_input.split(',') if c.strip()]
+        ns_dst_watchlist = list(dict.fromkeys(ns_dst_watchlist + _custom_coins))  # deduplicated
+
         if ns_dst_watchlist:
-            st.markdown(f'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;font-family:monospace;font-size:.6rem;color:#0284c7;margin:4px 0;">👁 Watching {len(ns_dst_watchlist)} coins: {", ".join(ns_dst_watchlist)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 10px;font-family:monospace;font-size:.6rem;color:#0284c7;margin:4px 0;">👁 Watching <b>{len(ns_dst_watchlist)} coins</b>: {", ".join(ns_dst_watchlist)}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="font-family:monospace;font-size:.6rem;color:#94a3b8;">No coins selected — DST will scan all APEX coins</div>', unsafe_allow_html=True)
 
