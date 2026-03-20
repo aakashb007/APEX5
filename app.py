@@ -3130,17 +3130,25 @@ class PrePumpScreener:
             sl=price-atr*1.5 if sig=="LONG" else price+atr*1.5
 
         try:
-            sl_dist=abs(price-sl) if abs(price-sl)>0 else atr
-            if sig=="LONG":
-                tp1=price+sl_dist*1.5; tp2=tp; tp3=max(price+sl_dist*4.0,liq_target) if liq_target>swing_high else price+sl_dist*4.0
-                tp3=max(tp3,price+sl_dist*3.0)
+            sl_dist = abs(price - sl) if abs(price - sl) > 0 else atr
+            if sig == "LONG":
+                tp1 = price + sl_dist * 1.0   # 1R — partial, move SL to BE
+                tp2 = price + sl_dist * 2.0   # 2R — take 50%
+                # TP3 = structural target (liq/swing) or 3.5R minimum
+                tp3_struct = liq_target if (liq_target > swing_high and liq_target > price + sl_dist * 2.0) else price + sl_dist * 3.5
+                tp3 = max(tp3_struct, price + sl_dist * 3.0)
+                tp  = tp3  # main TP for R:R calc = full target
             else:
-                tp1=price-sl_dist*1.5; tp2=tp; tp3=min(price-sl_dist*4.0,liq_target) if liq_target>0 and liq_target<swing_low else price-sl_dist*4.0
-                tp3=min(tp3,price-sl_dist*3.0)
+                tp1 = price - sl_dist * 1.0
+                tp2 = price - sl_dist * 2.0
+                tp3_struct = liq_target if (liq_target > 0 and liq_target < swing_low and liq_target < price - sl_dist * 2.0) else price - sl_dist * 3.5
+                tp3 = min(tp3_struct, price - sl_dist * 3.0)
+                tp  = tp3
         except:
-            tp1=price+atr*1.5 if sig=="LONG" else price-atr*1.5
-            tp2=price+atr*3   if sig=="LONG" else price-atr*3
-            tp3=price+atr*5   if sig=="LONG" else price-atr*5
+            tp1 = price + atr * 1.0 if sig == "LONG" else price - atr * 1.0
+            tp2 = price + atr * 2.0 if sig == "LONG" else price - atr * 2.0
+            tp3 = price + atr * 3.5 if sig == "LONG" else price - atr * 3.5
+            tp  = tp3
 
         try:
             rr=abs(tp-price)/abs(price-sl)
