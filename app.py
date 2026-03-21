@@ -1526,14 +1526,24 @@ def _gl_dynamic_tpsl(df_5m, df_4h, close_now, direction='LONG'):
             if tp3 >= close_now: tp3 = close_now - 3 * risk
 
         risk = abs(close_now - sl)
-        rr = round(abs(tp2 - close_now) / max(risk, 0.000001), 2)
+        # tp1=1R, tp2=2R (same as risk*2), tp3=structure/4H target
+        # Ensure all 3 are distinct and increasing (LONG) or decreasing (SHORT)
+        if direction == 'LONG':
+            tp1_r = close_now + risk * 1.0
+            tp2_r = close_now + risk * 2.0
+            tp3_r = max(tp3, close_now + risk * 3.0)
+        else:
+            tp1_r = close_now - risk * 1.0
+            tp2_r = close_now - risk * 2.0
+            tp3_r = min(tp3, close_now - risk * 3.0)
+        rr = round(abs(tp2_r - close_now) / max(risk, 0.000001), 2)
 
         return {
             'sl': round(sl, 8),
-            'tp': round(tp2, 8),
-            'tp1': round(tp1, 8),
-            'tp2': round(tp2, 8),
-            'tp3': round(tp3, 8),
+            'tp': round(tp2_r, 8),
+            'tp1': round(tp1_r, 8),
+            'tp2': round(tp2_r, 8),
+            'tp3': round(tp3_r, 8),
             'rr': rr
         }
     except:
@@ -1585,7 +1595,8 @@ def _gl_check_gainer_pullback(df_5m, df_4h, s, symbol):
             'pullback_pct': round(pullback_pct, 2),
             'recent_high': round(recent_high, 8),
             'vol_ratio': round(vol_now / volma, 2) if volma > 0 else 0,
-            'emoji': '🟢', 'label': 'GAINER PULLBACK'
+            'emoji': '🟢', 'label': 'GAINER PULLBACK',
+            'reasons': [f'4H up {round(chg_4h,1)}%', f'Pulled back {round(pullback_pct,1)}%', f'RSI {round(rsi_now,1)}', f'Vol {round(vol_now/volma,1)}x', 'ST BULLISH', 'Volume declining on pullback']
         }
     except: return None
 
@@ -1671,7 +1682,8 @@ def _gl_check_loser_bounce(df_5m, df_4h, s, symbol):
             'rr': tpsl['rr'], 'rsi': round(rsi_now, 1),
             'chg_4h': round(chg_4h, 2), 'chg_1h': round(_gl_pct_change_1h(df_5m), 2),
             'vol_ratio': round(vol_now / volma, 2) if volma > 0 else 0,
-            'emoji': '🔄', 'label': 'LOSER BOUNCE'
+            'emoji': '🔄', 'label': 'LOSER BOUNCE',
+            'reasons': [f'4H down {round(chg_4h,1)}%', f'RSI oversold {round(rsi_now,1)}', f'Vol spike {round(vol_now/volma,1)}x', 'ST BEARISH', 'Candle momentum slowing']
         }
     except: return None
 
@@ -7587,7 +7599,7 @@ if _gl_pre_pending:
             if eff_s.get('discord_webhook'):
                 alerted = st.session_state.get('gl_alerted', set())
                 for sig in pre_signals:
-                    _sid = f"{sig['symbol']}_{sig['type']}"
+                    _sid = f"{sig['symbol']}_{sig['type']}_{datetime.now().strftime('%Y%m%d%H')}"
                     if _sid not in alerted:
                         send_gl_discord_alert(eff_s['discord_webhook'], sig)
                         alerted.add(_sid)
@@ -7657,7 +7669,7 @@ elif gl_should_run and not _gl_active_done:
                 if eff_s.get('discord_webhook'):
                     alerted = st.session_state.get('gl_alerted', set())
                     for sig in active_signals:
-                        _sid = f"{sig['symbol']}_{sig['type']}"
+                        _sid = f"{sig['symbol']}_{sig['type']}_{datetime.now().strftime('%Y%m%d%H')}"
                         if _sid not in alerted:
                             send_gl_discord_alert(eff_s['discord_webhook'], sig)
                             alerted.add(_sid)
