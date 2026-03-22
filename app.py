@@ -3668,7 +3668,7 @@ with st.sidebar:
     </div>''', unsafe_allow_html=True)
 
     # ── Nav using st.button ──────────────────────────────────────────────────
-    nav_options=["🔥 Scanner","⚙️ Settings","📒 Journal","📊 Backtest","🧠 Catalyst","🔍 Coin Analyzer"]
+    nav_options=["🔥 Scanner","⚙️ Settings","📒 Journal","📊 Backtest","🧠 Catalyst","🔍 Coin Analyzer","📈 Inspector"]
     nav = st.session_state.get('nav_state','🔥 Scanner')
     st.markdown('<div style="padding:4px 6px;">', unsafe_allow_html=True)
     for _opt in nav_options:
@@ -6300,11 +6300,22 @@ if nav=="🔍 Coin Analyzer":
 
                 # ── Verdict ───────────────────────────────────────────────
                 _atr_now = float(_atr5.iloc[-1])
-                _sl_long = _st_line  # ST line as SL
-                _sl_short = _st_line
-                _sl_dist_long = abs(_price - _sl_long)
-                _tp_long = _price + 4 * _sl_dist_long
-                _tp_short = _price - 4 * _sl_dist_long
+                # SL must always be on the correct side of price
+                # LONG SL = lower ST band (below price) — always protective
+                # SHORT SL = upper ST band (above price) — always protective
+                _lower_now = float(_lower.iloc[-1])
+                _upper_now = float(_upper.iloc[-1])
+                _sl_long  = _lower_now  # always below price for LONG
+                _sl_short = _upper_now  # always above price for SHORT
+                # Safety check — if ST bands are wrong side, fall back to ATR
+                if _sl_long >= _price:
+                    _sl_long = _price - _atr_now * 1.5
+                if _sl_short <= _price:
+                    _sl_short = _price + _atr_now * 1.5
+                _sl_dist_long  = abs(_price - _sl_long)
+                _sl_dist_short = abs(_price - _sl_short)
+                _tp_long  = _price + 4 * _sl_dist_long
+                _tp_short = _price - 4 * _sl_dist_short
                 _rr = round(4 * _sl_dist_long / max(_sl_dist_long, 0.0001), 1)
 
                 if _score >= 40:
@@ -6506,15 +6517,38 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
 
                 # Entry plan
                 st.markdown("---")
+                _plan_dir = _ca_dir  # LONG or SHORT chosen by user
+                if _plan_dir == "LONG":
+                    _plan_sl   = _sl_long
+                    _plan_be   = _price + 1.5 * _sl_dist_long
+                    _plan_p1   = _price + 2.0 * _sl_dist_long
+                    _plan_tp   = _tp_long
+                    _plan_color = "#059669"
+                    _plan_icon  = "📗"
+                    _counter_trend = _st_dir_now == -1
+                else:
+                    _plan_sl   = _sl_short
+                    _plan_be   = _price - 1.5 * _sl_dist_short
+                    _plan_p1   = _price - 2.0 * _sl_dist_short
+                    _plan_tp   = _tp_short
+                    _plan_color = "#dc2626"
+                    _plan_icon  = "📕"
+                    _counter_trend = _st_dir_now == 1
+                _sl_label = f"${_plan_sl:.4f} (ST lower band)" if _plan_dir == "LONG" else f"${_plan_sl:.4f} (ST upper band)"
+                _st_now_label = "BEARISH" if _st_dir_now == -1 else "BULLISH"
+                _counter_warn = (f'<div style="font-family:monospace;font-size:.58rem;color:#dc2626;margin-top:8px;">'
+                                 f'⚠️ ST is currently {_st_now_label} — entering {_plan_dir} is counter-trend. Higher risk.</div>'
+                                 if _counter_trend else "")
                 st.markdown(f'''<div style="background:#f8f9fc;border:1px solid #7c3aed44;border-radius:10px;padding:16px 20px;">
-                  <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#7c3aed;margin-bottom:10px;">📋 TRADE PLAN (if entering LONG)</div>
+                  <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#7c3aed;margin-bottom:10px;">{_plan_icon} TRADE PLAN (if entering {_plan_dir})</div>
                   <div style="display:flex;gap:24px;flex-wrap:wrap;">
-                    <span style="font-family:monospace;font-size:.7rem;color:#e2e8f0;">Entry: <b>${_price:.4f}</b> (current)</span>
-                    <span style="font-family:monospace;font-size:.7rem;color:#dc2626;">SL: <b>${_st_line:.4f}</b> (ST line)</span>
-                    <span style="font-family:monospace;font-size:.7rem;color:#d97706;">Breakeven at: <b>${_price + 1.5*_sl_dist_long:.4f}</b> (1.5R)</span>
-                    <span style="font-family:monospace;font-size:.7rem;color:#059669;">Partial exit at: <b>${_price + 2*_sl_dist_long:.4f}</b> (2R — 50%)</span>
-                    <span style="font-family:monospace;font-size:.7rem;color:#059669;">Full exit: <b>${_tp_long:.4f}</b> (4R or ST flip)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#64748b;">Entry: <b>${_price:.4f}</b> (current)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#dc2626;">SL: <b>{_sl_label}</b></span>
+                    <span style="font-family:monospace;font-size:.7rem;color:#d97706;">Breakeven at: <b>${_plan_be:.4f}</b> (1.5R)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:{_plan_color};">Partial exit at: <b>${_plan_p1:.4f}</b> (2R — 50%)</span>
+                    <span style="font-family:monospace;font-size:.7rem;color:{_plan_color};">Full exit: <b>${_plan_tp:.4f}</b> (4R or ST flip)</span>
                   </div>
+                  {_counter_warn}
                 </div>''', unsafe_allow_html=True)
 
                 if _errors:
@@ -6534,6 +6568,398 @@ Be direct. No fluff. Think like a professional risk manager who protects capital
 # ─── AUTO-JOURNAL CHECK ──────────────────────────────────────────────────────
 # autocheck_journal_background(S)
 check_daily_summary(S)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGE: SIGNAL INSPECTOR
+# ═══════════════════════════════════════════════════════════════════════════
+if nav == "📈 Inspector":
+    st.markdown('<div class="section-h">📈 Signal Inspector — Long-Term Profitability Analysis</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:16px;">Tracks every signal from every scanner. Checks actual price outcome after 1h, 4h, 24h. Tells you which scanner and signal type is genuinely profitable over time.</div>', unsafe_allow_html=True)
+
+    # ── Inspector data file ───────────────────────────────────────────────
+    INSPECTOR_FILE = '/content/signal_inspector.csv'
+    INSPECTOR_COLS = ['id','ts','scanner','signal_type','symbol','direction','entry_price',
+                      'sl','tp','rr','score','tf',
+                      'p1h','p4h','p24h','outcome_1h','outcome_4h','outcome_24h',
+                      'tp_hit','sl_hit','checked_at']
+
+    def _ensure_inspector():
+        if not os.path.exists(INSPECTOR_FILE):
+            with open(INSPECTOR_FILE,'w',newline='',encoding='utf-8') as f:
+                csv.writer(f).writerow(INSPECTOR_COLS)
+
+    def _log_inspector_signal(scanner, signal_type, symbol, direction, entry, sl, tp, rr, score=0, tf=''):
+        """Log a new signal for tracking. Called whenever any scanner fires a signal."""
+        try:
+            _ensure_inspector()
+            _id = f"{symbol}_{scanner}_{signal_type}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            _ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            with open(INSPECTOR_FILE,'a',newline='',encoding='utf-8') as f:
+                csv.writer(f).writerow([_id,_ts,scanner,signal_type,symbol,direction,
+                                        entry,sl,tp,rr,score,tf,
+                                        '','','','','','',''])
+        except: pass
+
+    def _update_inspector_outcomes():
+        """Fetch current prices and update p1h/p4h/p24h for pending signals."""
+        try:
+            _ensure_inspector()
+            df = pd.read_csv(INSPECTOR_FILE)
+            if df.empty: return 0
+            import ccxt as _ci, time as _ti
+            _ex = _ci.gate({'enableRateLimit':True,'options':{'defaultType':'swap'}})
+            _now = datetime.now(timezone.utc)
+            updated = 0
+            for idx, row in df.iterrows():
+                try:
+                    _ts = datetime.strptime(str(row['ts'])[:19],'%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    _age_h = (_now - _ts).total_seconds() / 3600
+                    _entry = float(row['entry_price'])
+                    _sym = str(row['symbol'])
+                    if not _sym or _entry <= 0: continue
+
+                    # Fetch current price
+                    try:
+                        _ticker = _ex.fetch_ticker(_sym)
+                        _curr = float(_ticker['last'])
+                    except: continue
+
+                    _dir = str(row['direction']).upper()
+                    _move = (_curr - _entry) / _entry * 100 if _dir == 'LONG' else (_entry - _curr) / _entry * 100
+
+                    changed = False
+                    # Fill p1h if 1h+ elapsed and not filled
+                    if _age_h >= 1 and (pd.isna(row['p1h']) or str(row['p1h']) == ''):
+                        df.at[idx,'p1h'] = round(_move, 3)
+                        df.at[idx,'outcome_1h'] = 'WIN' if _move > 0 else 'LOSS'
+                        changed = True
+                    # Fill p4h if 4h+ elapsed
+                    if _age_h >= 4 and (pd.isna(row['p4h']) or str(row['p4h']) == ''):
+                        df.at[idx,'p4h'] = round(_move, 3)
+                        df.at[idx,'outcome_4h'] = 'WIN' if _move > 0 else 'LOSS'
+                        changed = True
+                    # Fill p24h if 24h+ elapsed
+                    if _age_h >= 24 and (pd.isna(row['p24h']) or str(row['p24h']) == ''):
+                        df.at[idx,'p24h'] = round(_move, 3)
+                        df.at[idx,'outcome_24h'] = 'WIN' if _move > 0 else 'LOSS'
+                        # Check TP/SL hit
+                        _tp = float(row['tp']) if row['tp'] else 0
+                        _sl = float(row['sl']) if row['sl'] else 0
+                        if _dir == 'LONG':
+                            df.at[idx,'tp_hit'] = 1 if _tp > 0 and _curr >= _tp else 0
+                            df.at[idx,'sl_hit'] = 1 if _sl > 0 and _curr <= _sl else 0
+                        else:
+                            df.at[idx,'tp_hit'] = 1 if _tp > 0 and _curr <= _tp else 0
+                            df.at[idx,'sl_hit'] = 1 if _sl > 0 and _curr >= _sl else 0
+                        changed = True
+                    if changed:
+                        df.at[idx,'checked_at'] = _now.strftime('%Y-%m-%d %H:%M:%S')
+                        updated += 1
+                except: continue
+            df.to_csv(INSPECTOR_FILE, index=False)
+            return updated
+        except Exception as e:
+            return 0
+
+    # ── Load data ─────────────────────────────────────────────────────────
+    _ensure_inspector()
+    try:
+        _idf = pd.read_csv(INSPECTOR_FILE)
+    except:
+        _idf = pd.DataFrame(columns=INSPECTOR_COLS)
+
+    # ── Top controls ──────────────────────────────────────────────────────
+    _ic1, _ic2, _ic3, _ic4 = st.columns([2,2,2,2])
+    with _ic1:
+        if st.button("🔄 Update Outcomes", use_container_width=True, help="Fetch current prices and fill 1H/4H/24H outcome columns"):
+            with st.spinner("Fetching prices..."):
+                _n = _update_inspector_outcomes()
+                _idf = pd.read_csv(INSPECTOR_FILE) if os.path.exists(INSPECTOR_FILE) else _idf
+            st.success(f"✅ Updated {_n} signals")
+    with _ic2:
+        if st.button("🗑️ Clear All Data", use_container_width=True):
+            if os.path.exists(INSPECTOR_FILE): os.remove(INSPECTOR_FILE)
+            _ensure_inspector()
+            _idf = pd.DataFrame(columns=INSPECTOR_COLS)
+            st.success("Cleared")
+    with _ic3:
+        if not _idf.empty and os.path.exists(INSPECTOR_FILE):
+            with open(INSPECTOR_FILE,'rb') as _f:
+                st.download_button("⬇️ Download CSV", _f.read(), "signal_inspector.csv", "text/csv", use_container_width=True)
+    with _ic4:
+        _uploaded_insp = st.file_uploader("⬆️ Upload CSV", type=['csv'], key='insp_upload', label_visibility='collapsed')
+        if _uploaded_insp:
+            try:
+                _idf = pd.read_csv(_uploaded_insp)
+                _idf.to_csv(INSPECTOR_FILE, index=False)
+                st.success(f"✅ Loaded {len(_idf)} signals")
+            except Exception as _ue:
+                st.error(f"❌ {_ue}")
+
+    st.markdown("---")
+
+    if _idf.empty or len(_idf) == 0:
+        st.markdown('<div class="empty-st">📈 No signals tracked yet.<br><br>The Inspector automatically logs signals as each scanner runs. Just use the app normally — every APEX, DEMA, G/L and Sentinel signal will be tracked here.<br><br>Come back after a few days to see profitability stats.</div>', unsafe_allow_html=True)
+    else:
+        # ── Convert types ─────────────────────────────────────────────────
+        for _col in ['p1h','p4h','p24h','rr','score']:
+            if _col in _idf.columns:
+                _idf[_col] = pd.to_numeric(_idf[_col], errors='coerce')
+
+        _total = len(_idf)
+        _with_24h = _idf['p24h'].notna().sum()
+        _with_4h  = _idf['p4h'].notna().sum()
+        _with_1h  = _idf['p1h'].notna().sum()
+
+        # ── Summary stat strip ────────────────────────────────────────────
+        _d24 = _idf[_idf['p24h'].notna()]
+        _wr24 = round(_d24[_d24['p24h']>0].shape[0]/_d24.shape[0]*100,1) if len(_d24)>0 else 0
+        _avg24 = round(_d24['p24h'].mean(),2) if len(_d24)>0 else 0
+        _d4 = _idf[_idf['p4h'].notna()]
+        _wr4 = round(_d4[_d4['p4h']>0].shape[0]/_d4.shape[0]*100,1) if len(_d4)>0 else 0
+
+        st.markdown(f"""<div class="stat-strip">
+          <div><div class="ss-val">{_total}</div><div class="ss-lbl">Total Signals</div></div>
+          <div><div class="ss-val">{_with_1h}</div><div class="ss-lbl">1H Checked</div></div>
+          <div><div class="ss-val">{_with_4h}</div><div class="ss-lbl">4H Checked</div></div>
+          <div><div class="ss-val">{_with_24h}</div><div class="ss-lbl">24H Checked</div></div>
+          <div><div class="ss-val" style="color:{'var(--green)' if _wr24>=55 else 'var(--red)'}">{_wr24}%</div><div class="ss-lbl">24H Win Rate</div></div>
+          <div><div class="ss-val" style="color:{'var(--green)' if _avg24>0 else 'var(--red)'}">{_avg24:+.2f}%</div><div class="ss-lbl">Avg 24H Move</div></div>
+          <div><div class="ss-val" style="color:{'var(--green)' if _wr4>=55 else 'var(--red)'}">{_wr4}%</div><div class="ss-lbl">4H Win Rate</div></div>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Per-scanner breakdown ─────────────────────────────────────────
+        st.markdown("### 📊 Performance by Scanner")
+        _scanners = _idf['scanner'].unique()
+        _scol1, _scol2 = st.columns(2)
+        _scol_idx = 0
+        for _sc in _scanners:
+            _sdf = _idf[_idf['scanner']==_sc]
+            _s24 = _sdf[_sdf['p24h'].notna()]
+            _s4  = _sdf[_sdf['p4h'].notna()]
+            _s1  = _sdf[_sdf['p1h'].notna()]
+            _swr24 = round(_s24[_s24['p24h']>0].shape[0]/_s24.shape[0]*100,1) if len(_s24)>0 else None
+            _swr4  = round(_s4[_s4['p4h']>0].shape[0]/_s4.shape[0]*100,1) if len(_s4)>0 else None
+            _savg24 = round(_s24['p24h'].mean(),2) if len(_s24)>0 else None
+            _badge_c = '#059669' if (_swr24 or 0)>=55 else ('#d97706' if (_swr24 or 0)>=45 else '#dc2626')
+            _verdict = '✅ PROFITABLE' if (_swr24 or 0)>=55 and (_savg24 or 0)>0 else ('⚠️ MARGINAL' if (_swr24 or 0)>=45 else ('❌ LOSING' if _swr24 is not None else '⏳ PENDING'))
+
+            _card_html = f'''<div style="background:white;border:1px solid #e5e7eb;border-left:4px solid {_badge_c};border-radius:8px;padding:12px 16px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-family:monospace;font-weight:800;font-size:.8rem;color:#1e293b;">{_sc}</span>
+                <span style="font-family:monospace;font-size:.6rem;font-weight:700;background:{_badge_c};color:white;padding:2px 8px;border-radius:4px;">{_verdict}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;">
+                <div style="text-align:center;"><div style="font-family:monospace;font-size:.9rem;font-weight:800;color:#1e293b;">{len(_sdf)}</div><div style="font-family:monospace;font-size:.55rem;color:#64748b;">SIGNALS</div></div>
+                <div style="text-align:center;"><div style="font-family:monospace;font-size:.9rem;font-weight:800;color:{'#059669' if (_swr24 or 0)>=55 else '#dc2626'};">{f"{_swr24}%" if _swr24 is not None else "—"}</div><div style="font-family:monospace;font-size:.55rem;color:#64748b;">24H WIN RATE</div></div>
+                <div style="text-align:center;"><div style="font-family:monospace;font-size:.9rem;font-weight:800;color:{'#059669' if (_swr4 or 0)>=55 else '#dc2626'};">{f"{_swr4}%" if _swr4 is not None else "—"}</div><div style="font-family:monospace;font-size:.55rem;color:#64748b;">4H WIN RATE</div></div>
+                <div style="text-align:center;"><div style="font-family:monospace;font-size:.9rem;font-weight:800;color:{'#059669' if (_savg24 or 0)>0 else '#dc2626'};">{f"{_savg24:+.2f}%" if _savg24 is not None else "—"}</div><div style="font-family:monospace;font-size:.55rem;color:#64748b;">AVG 24H MOVE</div></div>
+              </div>
+            </div>'''
+            if _scol_idx % 2 == 0:
+                with _scol1: st.markdown(_card_html, unsafe_allow_html=True)
+            else:
+                with _scol2: st.markdown(_card_html, unsafe_allow_html=True)
+            _scol_idx += 1
+
+        # ── Per signal type breakdown ─────────────────────────────────────
+        st.markdown("### 🔬 Performance by Signal Type")
+        _type_stats = []
+        for _st_type in _idf['signal_type'].unique():
+            _tdf = _idf[_idf['signal_type']==_st_type]
+            _t24 = _tdf[_tdf['p24h'].notna()]
+            _t4  = _tdf[_tdf['p4h'].notna()]
+            if len(_t24) < 3: continue  # skip if not enough data
+            _twr = round(_t24[_t24['p24h']>0].shape[0]/_t24.shape[0]*100,1)
+            _tavg = round(_t24['p24h'].mean(),2)
+            _twr4 = round(_t4[_t4['p4h']>0].shape[0]/_t4.shape[0]*100,1) if len(_t4)>0 else 0
+            _type_stats.append({'Type':_st_type,'Signals':len(_tdf),'24H WR':f"{_twr}%",
+                                '4H WR':f"{_twr4}%",'Avg 24H':f"{_tavg:+.2f}%",
+                                'wr_num':_twr,'avg_num':_tavg})
+        if _type_stats:
+            _type_stats.sort(key=lambda x: x['wr_num'], reverse=True)
+            _type_df = pd.DataFrame(_type_stats)[['Type','Signals','24H WR','4H WR','Avg 24H']]
+            st.dataframe(_type_df, use_container_width=True, hide_index=True)
+
+        # ── Direction analysis ────────────────────────────────────────────
+        st.markdown("### 📐 LONG vs SHORT")
+        _dcol1, _dcol2 = st.columns(2)
+        for _dir, _dcol in [('LONG', _dcol1), ('SHORT', _dcol2)]:
+            _ddf = _idf[(_idf['direction']==_dir) & _idf['p24h'].notna()]
+            if len(_ddf) > 0:
+                _dwr = round(_ddf[_ddf['p24h']>0].shape[0]/len(_ddf)*100,1)
+                _davg = round(_ddf['p24h'].mean(),2)
+                _dc = '#059669' if _dwr>=55 and _davg>0 else '#dc2626'
+                with _dcol:
+                    st.markdown(f'''<div style="background:white;border:1px solid #e5e7eb;border-left:4px solid {_dc};border-radius:8px;padding:12px 16px;">
+                      <div style="font-family:monospace;font-weight:800;font-size:.8rem;color:{_dc};margin-bottom:8px;">{'📗' if _dir=='LONG' else '📕'} {_dir}</div>
+                      <div style="font-family:monospace;font-size:.75rem;">Signals: <b>{len(_ddf)}</b> | Win rate: <b style="color:{_dc}">{_dwr}%</b> | Avg: <b style="color:{_dc}">{_davg:+.2f}%</b></div>
+                    </div>''', unsafe_allow_html=True)
+
+        # ── Recent signals table ──────────────────────────────────────────
+        st.markdown("### 📋 All Signals")
+        _show_cols = ['ts','scanner','signal_type','symbol','direction','entry_price','rr','p1h','p4h','p24h','outcome_24h']
+        _show_cols = [c for c in _show_cols if c in _idf.columns]
+        _disp = _idf[_show_cols].sort_values('ts', ascending=False).head(100)
+        # Color code outcome column
+        st.dataframe(_disp, use_container_width=True, hide_index=True,
+                     column_config={
+                         'p1h': st.column_config.NumberColumn('1H %', format="%.2f"),
+                         'p4h': st.column_config.NumberColumn('4H %', format="%.2f"),
+                         'p24h': st.column_config.NumberColumn('24H %', format="%.2f"),
+                         'entry_price': st.column_config.NumberColumn('Entry', format="%.4f"),
+                         'rr': st.column_config.NumberColumn('R:R', format="%.1f"),
+                     })
+
+        # ── Auto-update note ──────────────────────────────────────────────
+        st.markdown('<div style="font-family:monospace;font-size:.6rem;color:#94a3b8;margin-top:12px;">💡 Click "Update Outcomes" to fetch current prices and fill the 1H/4H/24H columns. Do this once a day for best results. After 2-4 weeks you will have enough data to see which scanner is genuinely profitable.</div>', unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGE: INSPECTOR
+# ═══════════════════════════════════════════════════════════════════════════
+if nav == "📈 Inspector":
+    st.markdown('<div class="section-h">📈 Signal Performance Inspector</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:16px;">Tracks every signal from every scanner — APEX, DEMA, G/L, Sentinel — and measures real profitability over time.</div>', unsafe_allow_html=True)
+
+    import os as _os_insp
+
+    # ── Load data from all sources ────────────────────────────────────────
+    _j_df   = pd.read_csv(JOURNAL_FILE)   if _os_insp.path.exists(JOURNAL_FILE)   else pd.DataFrame()
+    _gl_df  = pd.read_csv(GL_PERF_FILE)   if _os_insp.path.exists(GL_PERF_FILE)   else pd.DataFrame()
+
+    # ── Summary cards ─────────────────────────────────────────────────────
+    _icol1, _icol2, _icol3, _icol4 = st.columns(4)
+
+    # APEX + DEMA + Sentinel signals (from journal)
+    _apex_total = len(_j_df) if not _j_df.empty else 0
+    _apex_wins  = len(_j_df[_j_df.get('status','') == 'WIN']) if not _j_df.empty and 'status' in _j_df.columns else 0
+    _apex_wr    = round(_apex_wins / max(_apex_total, 1) * 100, 1)
+
+    # G/L signals (from gl_performance)
+    _gl_total   = len(_gl_df) if not _gl_df.empty else 0
+    _gl_wins    = len(_gl_df[_gl_df['outcome'] == 'WIN']) if not _gl_df.empty and 'outcome' in _gl_df.columns else 0
+    _gl_wr      = round(_gl_wins / max(_gl_total, 1) * 100, 1)
+
+    with _icol1:
+        st.markdown(f'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;text-align:center;"><div style="font-family:monospace;font-size:.6rem;color:#64748b;">APEX SIGNALS</div><div style="font-family:monospace;font-size:1.4rem;font-weight:800;color:#059669;">{_apex_total}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">logged</div></div>', unsafe_allow_html=True)
+    with _icol2:
+        _dema_sigs = len([r for r in st.session_state.get('dst_results',[])]) 
+        st.markdown(f'<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px;text-align:center;"><div style="font-family:monospace;font-size:.6rem;color:#64748b;">DEMA SIGNALS</div><div style="font-family:monospace;font-size:1.4rem;font-weight:800;color:#2563eb;">{_dema_sigs}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">this session</div></div>', unsafe_allow_html=True)
+    with _icol3:
+        st.markdown(f'<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px;text-align:center;"><div style="font-family:monospace;font-size:.6rem;color:#64748b;">G/L SIGNALS</div><div style="font-family:monospace;font-size:1.4rem;font-weight:800;color:#d97706;">{_gl_total}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">tracked</div></div>', unsafe_allow_html=True)
+    with _icol4:
+        _sent_sigs = len(st.session_state.get('sentinel_results',[]))
+        st.markdown(f'<div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px;padding:12px;text-align:center;"><div style="font-family:monospace;font-size:.6rem;color:#64748b;">SENTINEL</div><div style="font-family:monospace;font-size:1.4rem;font-weight:800;color:#7c3aed;">{_sent_sigs}</div><div style="font-family:monospace;font-size:.6rem;color:#64748b;">this session</div></div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── G/L Performance (most data) ───────────────────────────────────────
+    st.markdown('<div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#0284c7;margin-bottom:8px;">📊 G/L Scanner — Signal Performance</div>', unsafe_allow_html=True)
+
+    if _gl_df.empty:
+        st.info("No G/L signals logged yet. Run the G/L scanner to start tracking.")
+    else:
+        _gl_d = _gl_df.copy()
+        _gl_d['entry'] = pd.to_numeric(_gl_d['entry'], errors='coerce')
+        _gl_d['pnl_pct'] = pd.to_numeric(_gl_d.get('pnl_pct', 0), errors='coerce').fillna(0)
+
+        # Per signal type breakdown
+        _types = ['GAINER_PULLBACK','GAINER_BREAKOUT','LOSER_BOUNCE','LOSER_BREAKDOWN','PRE_GAINER','PRE_LOSER','PRE_GAINER_STAR','PRE_LOSER_STAR']
+        _type_stats = []
+        for _t in _types:
+            _td = _gl_d[_gl_d['type'] == _t]
+            if len(_td) == 0: continue
+            _w = len(_td[_td['outcome'] == 'WIN'])
+            _l = len(_td[_td['outcome'] == 'LOSS'])
+            _p = len(_td[_td['outcome'] == 'PENDING'])
+            _wr = round(_w / max(_w+_l, 1) * 100, 1)
+            _avg_pnl = round(_td['pnl_pct'].mean(), 2) if len(_td) > 0 else 0
+            _type_stats.append({'Type': _t, 'Total': len(_td), 'Win': _w, 'Loss': _l,
+                                 'Pending': _p, 'Win Rate': f"{_wr}%", 'Avg PnL': f"{_avg_pnl:+.2f}%"})
+
+        if _type_stats:
+            _ts_df = pd.DataFrame(_type_stats)
+            st.dataframe(_ts_df, use_container_width=True, hide_index=True)
+
+        # Overall G/L metrics
+        _gl_settled = _gl_d[_gl_d['outcome'].isin(['WIN','LOSS'])]
+        if len(_gl_settled) > 0:
+            _tot_wr = round(len(_gl_settled[_gl_settled['outcome']=='WIN']) / len(_gl_settled) * 100, 1)
+            _avg_win  = round(_gl_d[_gl_d['outcome']=='WIN']['pnl_pct'].mean(), 2)
+            _avg_loss = round(_gl_d[_gl_d['outcome']=='LOSS']['pnl_pct'].mean(), 2)
+            _avg_pnl_all = round(_gl_settled['pnl_pct'].mean(), 2)
+            _profitable = _avg_pnl_all > 0
+
+            _gc1, _gc2, _gc3, _gc4 = st.columns(4)
+            with _gc1: st.metric("Overall Win Rate", f"{_tot_wr}%")
+            with _gc2: st.metric("Avg Win", f"{_avg_win:+.2f}%")
+            with _gc3: st.metric("Avg Loss", f"{_avg_loss:+.2f}%")
+            with _gc4: st.metric("Avg PnL (all)", f"{_avg_pnl_all:+.2f}%", delta="Profitable ✅" if _profitable else "Losing ❌")
+
+    st.markdown("---")
+
+    # ── APEX Journal Performance ───────────────────────────────────────────
+    st.markdown('<div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#059669;margin-bottom:8px;">🔥 APEX / Sentinel — Signal Performance</div>', unsafe_allow_html=True)
+
+    if _j_df.empty:
+        st.info("No APEX signals logged yet. Run the main scanner to start tracking.")
+    else:
+        _jd = _j_df.copy()
+        # Per signal class breakdown
+        if 'class' in _jd.columns:
+            _cls_stats = []
+            for _cls in _jd['class'].dropna().unique():
+                _cd = _jd[_jd['class'] == _cls]
+                _cw = len(_cd[_cd.get('status','') == 'WIN']) if 'status' in _cd.columns else 0
+                _cl = len(_cd[_cd.get('status','') == 'LOSS']) if 'status' in _cd.columns else 0
+                _cp = len(_cd) - _cw - _cl
+                _cwr = round(_cw / max(_cw+_cl, 1) * 100, 1)
+                _cls_stats.append({'Class': _cls, 'Total': len(_cd), 'Win': _cw,
+                                    'Loss': _cl, 'Pending': _cp, 'Win Rate': f"{_cwr}%"})
+            if _cls_stats:
+                st.dataframe(pd.DataFrame(_cls_stats), use_container_width=True, hide_index=True)
+
+        # Recent signals table
+        st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-top:8px;margin-bottom:4px;">Recent logged signals:</div>', unsafe_allow_html=True)
+        _show_cols = [c for c in ['ts','symbol','type','pump_score','class','status','tp','sl'] if c in _jd.columns]
+        st.dataframe(_jd[_show_cols].tail(20).iloc[::-1], use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # ── Upload CSV for manual analysis ────────────────────────────────────
+    st.markdown('<div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#7c3aed;margin-bottom:8px;">📂 Upload Historical Data for Analysis</div>', unsafe_allow_html=True)
+    _up_file = st.file_uploader("Upload trade_journal.csv or gl_performance.csv", type=['csv'], key='inspector_upload')
+    if _up_file:
+        try:
+            _up_df = pd.read_csv(_up_file)
+            st.success(f"✅ Loaded {len(_up_df)} rows, {len(_up_df.columns)} columns")
+            st.dataframe(_up_df.head(20), use_container_width=True, hide_index=True)
+
+            # Auto-detect type and show stats
+            if 'pump_score' in _up_df.columns:
+                st.markdown("**Detected: APEX Journal**")
+                if 'status' in _up_df.columns:
+                    _vc = _up_df['status'].value_counts()
+                    st.write(_vc)
+            elif 'outcome' in _up_df.columns:
+                st.markdown("**Detected: G/L Performance**")
+                _settled = _up_df[_up_df['outcome'].isin(['WIN','LOSS'])]
+                if len(_settled) > 0:
+                    _w = len(_settled[_settled['outcome']=='WIN'])
+                    _wr = round(_w/len(_settled)*100,1)
+                    _up_df['pnl_pct'] = pd.to_numeric(_up_df.get('pnl_pct',0), errors='coerce').fillna(0)
+                    st.metric("Win Rate", f"{_wr}%", f"{len(_settled)} settled signals")
+                    if 'type' in _up_df.columns:
+                        _tg = _up_df[_up_df['outcome'].isin(['WIN','LOSS'])].groupby('type').agg(
+                            Total=('outcome','count'),
+                            Wins=('outcome', lambda x: (x=='WIN').sum()),
+                        ).assign(WR=lambda d: (d['Wins']/d['Total']*100).round(1))
+                        st.dataframe(_tg, use_container_width=True)
+        except Exception as _ue:
+            st.error(f"Could not parse file: {_ue}")
+
+    st.markdown("---")
+    st.markdown('<div style="font-family:monospace;font-size:.58rem;color:#94a3b8;">💡 For long-term tracking: move trade_journal.csv and gl_performance.csv to Google Drive so they survive Colab restarts.</div>', unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAGE: SCANNER
@@ -6765,6 +7191,12 @@ if do_scan:
                 try:
                     with open(_lsig_file,'a') as _lf: _lf.write(_jkey + '\n')
                 except: pass
+                # Log to Signal Inspector
+                try:
+                    _log_inspector_signal('APEX', r.get('cls',''), r['symbol'], r['type'],
+                        float(r.get('price',0)), float(r.get('sl',0)), float(r.get('tp',0)),
+                        float(r.get('rr',0)), int(r.get('pump_score',0)), '')
+                except: pass
 
             # ── NOTIFICATION CHECK ────────────────────────────────────────
             send_alert=False
@@ -6982,6 +7414,12 @@ if st.session_state.get('sentinel_active') and do_scan and st.session_state.scan
                     st.session_state.sentinel_results.insert(0,r)
                     # FIX: Sentinel signals go to journal too
                     log_trade(r)
+                    try:
+                        _log_inspector_signal('SENTINEL', r.get('cls',''), r['symbol'],
+                            r['type'], float(r.get('price',0)), float(r.get('sl',0)),
+                            float(r.get('tp',0)), float(r.get('rr',0)),
+                            int(r.get('pump_score',0)), '')
+                    except: pass
                 if ak not in st.session_state.alerted_sigs:
                     _p=float(r.get('price') or 0); _t=float(r.get('tp') or 0); _s_=float(r.get('sl') or 0)
                     rr_r=f"{abs(_t-_p)/abs(_p-_s_):.1f}:1" if abs(_p-_s_)>0 else "N/A"
@@ -7272,6 +7710,15 @@ if dst_should_run:
                 # Sort: 5m first then 15m, grouped by symbol
                 dst_signals = sorted(_all_dst_signals, key=lambda x: (x['symbol'], x.get('tf','5m')))
                 st.session_state['dst_results'] = dst_signals
+                # Log DEMA signals to inspector
+                for _ds_insp in dst_signals:
+                    try:
+                        _log_inspector_signal('DEMA', f"DST_{_ds_insp.get('tf','5m').upper()}",
+                            _ds_insp['symbol'], _ds_insp['direction'],
+                            float(_ds_insp.get('close',0)), float(_ds_insp.get('sl',0)),
+                            float(_ds_insp.get('tp',0)), float(_ds_insp.get('rr',0)),
+                            0, _ds_insp.get('tf','5m'))
+                    except: pass
                 # AI holistic analysis on DEMA signals
                 if dst_signals:
                     _dst_ai = _ai_analyse_signals(dst_signals, scanner_type='DEMA')
@@ -7596,6 +8043,12 @@ if _gl_pre_pending:
             st.session_state['gl_results'] = _gl_all_new
             for sig in pre_signals:
                 log_gl_signal(sig)
+                try:
+                    _log_inspector_signal('GL', sig.get('type',''), sig['symbol'],
+                        sig.get('direction','WATCH'), float(sig.get('close',0)),
+                        float(sig.get('sl',0)), float(sig.get('tp',0)),
+                        float(sig.get('rr',0)), 0, '')
+                except: pass
             if eff_s.get('discord_webhook'):
                 alerted = st.session_state.get('gl_alerted', set())
                 for sig in pre_signals:
@@ -7844,3 +8297,308 @@ if eff_s.get('auto_scan'):
     st.markdown(f'<div style="text-align:center;font-family:monospace;font-size:.62rem;color:#9ca3af;padding:16px 0;">🤖 Auto-Pilot Active — Next scan in {eff_s["auto_interval"]} minute(s)</div>',unsafe_allow_html=True)
     time.sleep(eff_s['auto_interval']*60)
     st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📈 SIGNAL PERFORMANCE INSPECTOR
+# ═══════════════════════════════════════════════════════════════════════════
+if nav == "📈 Inspector":
+    st.markdown('<div class="section-h">📈 Signal Performance Inspector</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:16px;">Tracks every signal from every scanner — APEX, Sentinel, DEMA, G/L — and shows real P&L outcomes over time.</div>', unsafe_allow_html=True)
+
+    # ── Load all data sources ─────────────────────────────────────────────
+    _insp_apex = pd.DataFrame()
+    _insp_gl   = pd.DataFrame()
+    _insp_err  = []
+
+    try:
+        if os.path.exists(JOURNAL_FILE):
+            _insp_apex = pd.read_csv(JOURNAL_FILE)
+            _insp_apex['_source'] = 'APEX/Sentinel'
+        else:
+            _insp_err.append("APEX journal not found — run a scan first")
+    except Exception as e:
+        _insp_err.append(f"APEX journal error: {e}")
+
+    try:
+        if os.path.exists(GL_PERF_FILE):
+            _insp_gl = pd.read_csv(GL_PERF_FILE)
+            _insp_gl['_source'] = 'G/L Scanner'
+        else:
+            _insp_err.append("G/L performance file not found — run a G/L scan first")
+    except Exception as e:
+        _insp_err.append(f"G/L performance error: {e}")
+
+    # ── Upload CSV option ─────────────────────────────────────────────────
+    with st.expander("📁 Upload external CSVs to analyse"):
+        _up_apex = st.file_uploader("Upload APEX journal (trade_journal.csv)", type=['csv'], key='insp_apex_up')
+        _up_gl   = st.file_uploader("Upload G/L performance (gl_performance.csv)", type=['csv'], key='insp_gl_up')
+        if _up_apex:
+            _insp_apex = pd.read_csv(_up_apex)
+            _insp_apex['_source'] = 'APEX/Sentinel'
+            st.success(f"✅ APEX journal loaded — {len(_insp_apex)} rows")
+        if _up_gl:
+            _insp_gl = pd.read_csv(_up_gl)
+            _insp_gl['_source'] = 'G/L Scanner'
+            st.success(f"✅ G/L performance loaded — {len(_insp_gl)} rows")
+
+    for e in _insp_err:
+        st.warning(e)
+
+    # ── Refresh outcomes button ───────────────────────────────────────────
+    _c1, _c2 = st.columns([2, 5])
+    with _c1:
+        if st.button("🔄 Refresh Outcomes Now", use_container_width=True):
+            try:
+                check_gl_outcomes()
+                st.success("✅ Outcomes updated")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+    with _c2:
+        st.markdown('<div style="font-family:monospace;font-size:.6rem;color:#64748b;padding-top:10px;">Fetches current price for all PENDING signals and marks WIN/LOSS if TP or SL was hit</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 1: APEX / SENTINEL SCANNER PERFORMANCE
+    # ═══════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="scanner-section-label">🔥 APEX + SENTINEL SCANNER PERFORMANCE</div>', unsafe_allow_html=True)
+
+    if not _insp_apex.empty:
+        try:
+            _ax = _insp_apex.copy()
+            # Normalise columns
+            _ax['price'] = pd.to_numeric(_ax.get('price', _ax.get('close', 0)), errors='coerce').fillna(0)
+            _ax['tp']    = pd.to_numeric(_ax.get('tp2', _ax.get('tp', 0)), errors='coerce').fillna(0)
+            _ax['sl']    = pd.to_numeric(_ax.get('sl', 0), errors='coerce').fillna(0)
+            _ax['score'] = pd.to_numeric(_ax.get('pump_score', 0), errors='coerce').fillna(0)
+            _ax['status'] = _ax.get('status', 'ACTIVE').fillna('ACTIVE')
+            _ax['cls']   = _ax.get('class', _ax.get('cls', 'unknown')).fillna('unknown')
+            _ax['sym']   = _ax.get('symbol', '').str.replace('/USDT:USDT','').str.replace('/USDT','')
+            _ax['dir']   = _ax.get('type', 'LONG')
+
+            # Calculate theoretical P&L where outcome known
+            def _apex_pnl(row):
+                if row['status'] in ('TP_HIT','WIN') and row['price'] > 0 and row['tp'] > 0:
+                    return round((row['tp'] - row['price']) / row['price'] * 100 if row['dir']=='LONG'
+                                 else (row['price'] - row['tp']) / row['price'] * 100, 2)
+                elif row['status'] in ('SL_HIT','LOSS') and row['price'] > 0 and row['sl'] > 0:
+                    return round((row['sl'] - row['price']) / row['price'] * 100 if row['dir']=='LONG'
+                                 else (row['price'] - row['sl']) / row['price'] * 100, 2)
+                return None
+
+            _ax['pnl'] = _ax.apply(_apex_pnl, axis=1)
+            _ax_closed = _ax[_ax['pnl'].notna()]
+            _ax_active = _ax[_ax['status'] == 'ACTIVE']
+            _ax_wins   = _ax_closed[_ax_closed['pnl'] > 0]
+            _ax_losses = _ax_closed[_ax_closed['pnl'] < 0]
+
+            # Summary stats
+            _sc1, _sc2, _sc3, _sc4, _sc5, _sc6 = st.columns(6)
+            _sc1.metric("Total Signals", len(_ax))
+            _sc2.metric("Closed", len(_ax_closed))
+            _sc3.metric("Active", len(_ax_active))
+            _sc4.metric("Win Rate", f"{len(_ax_wins)/max(len(_ax_closed),1)*100:.0f}%" if len(_ax_closed) > 0 else "—")
+            _sc5.metric("Avg Win", f"+{_ax_wins['pnl'].mean():.1f}%" if len(_ax_wins) > 0 else "—")
+            _sc6.metric("Avg Loss", f"{_ax_losses['pnl'].mean():.1f}%" if len(_ax_losses) > 0 else "—")
+
+            # Per-class breakdown
+            if len(_ax_closed) > 0:
+                st.markdown("**Performance by Signal Class:**")
+                _cls_rows = []
+                for _cls in _ax['cls'].unique():
+                    _cdf = _ax_closed[_ax_closed['cls'] == _cls]
+                    if len(_cdf) == 0: continue
+                    _cw = _cdf[_cdf['pnl'] > 0]
+                    _wr = len(_cw)/len(_cdf)*100
+                    _apnl = _cdf['pnl'].mean()
+                    _cls_rows.append({'Class': _cls, 'Signals': len(_cdf),
+                                      'Win Rate': f"{_wr:.0f}%", 'Avg P&L': f"{_apnl:+.2f}%",
+                                      'Best': f"+{_cdf['pnl'].max():.2f}%",
+                                      'Worst': f"{_cdf['pnl'].min():.2f}%"})
+                if _cls_rows:
+                    _cls_df = pd.DataFrame(_cls_rows).sort_values('Win Rate', ascending=False)
+                    st.dataframe(_cls_df, use_container_width=True, hide_index=True)
+
+            # Per-coin breakdown
+            if len(_ax_closed) >= 3:
+                st.markdown("**Top Performing Coins (APEX):**")
+                _coin_rows = []
+                for _sym in _ax_closed['sym'].unique():
+                    _cdf = _ax_closed[_ax_closed['sym'] == _sym]
+                    if len(_cdf) < 2: continue
+                    _cw = _cdf[_cdf['pnl'] > 0]
+                    _wr = len(_cw)/len(_cdf)*100
+                    _apnl = _cdf['pnl'].mean()
+                    _coin_rows.append({'Coin': _sym, 'Signals': len(_cdf),
+                                       'Win Rate': f"{_wr:.0f}%", 'Avg P&L': f"{_apnl:+.2f}%",
+                                       'Total P&L': f"{_cdf['pnl'].sum():+.2f}%"})
+                if _coin_rows:
+                    _coin_df = pd.DataFrame(_coin_rows).sort_values('Total P&L', ascending=False)
+                    _good = _coin_df[_coin_df['Total P&L'].str.replace('%','').astype(float) > 0].head(5)
+                    _bad  = _coin_df[_coin_df['Total P&L'].str.replace('%','').astype(float) < 0].tail(5)
+                    _cc1, _cc2 = st.columns(2)
+                    with _cc1:
+                        st.markdown("🟢 Best coins")
+                        st.dataframe(_good, use_container_width=True, hide_index=True)
+                    with _cc2:
+                        st.markdown("🔴 Worst coins")
+                        st.dataframe(_bad, use_container_width=True, hide_index=True)
+
+            # Overall verdict
+            if len(_ax_closed) >= 5:
+                _total_pnl = _ax_closed['pnl'].sum()
+                _wr_overall = len(_ax_wins)/len(_ax_closed)*100
+                _profit_factor = abs(_ax_wins['pnl'].sum()) / max(abs(_ax_losses['pnl'].sum()), 0.01)
+                _verdict_color = "#059669" if _total_pnl > 0 else "#dc2626"
+                _verdict_text  = "✅ PROFITABLE" if _total_pnl > 0 else "❌ LOSING"
+                st.markdown(f'''<div style="background:{'#f0fdf4' if _total_pnl>0 else '#fef2f2'};border:1.5px solid {_verdict_color};border-radius:8px;padding:12px 18px;margin:10px 0;">
+                  <span style="font-family:monospace;font-size:.75rem;font-weight:900;color:{_verdict_color};">{_verdict_text}</span>
+                  <span style="font-family:monospace;font-size:.65rem;color:#475569;margin-left:16px;">
+                    Total P&L: <b style="color:{_verdict_color};">{_total_pnl:+.1f}%</b> across {len(_ax_closed)} closed signals &nbsp;|&nbsp;
+                    Win Rate: <b>{_wr_overall:.0f}%</b> &nbsp;|&nbsp;
+                    Profit Factor: <b>{_profit_factor:.2f}</b> &nbsp;|&nbsp;
+                    Active: <b>{len(_ax_active)}</b>
+                  </span>
+                </div>''', unsafe_allow_html=True)
+            else:
+                st.info(f"📊 {len(_ax)} signals logged, {len(_ax_closed)} closed. Need at least 5 closed signals for performance analysis.")
+
+        except Exception as e:
+            st.error(f"APEX analysis error: {e}")
+    else:
+        st.markdown('<div style="font-family:monospace;font-size:.65rem;color:#94a3b8;padding:8px 0;">No APEX signals logged yet — run scans to build history</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 2: G/L SCANNER PERFORMANCE
+    # ═══════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="scanner-section-label">📊 G/L SCANNER PERFORMANCE</div>', unsafe_allow_html=True)
+
+    if not _insp_gl.empty:
+        try:
+            _gl = _insp_gl.copy()
+            _gl['entry']   = pd.to_numeric(_gl.get('entry', 0), errors='coerce').fillna(0)
+            _gl['pnl_pct'] = pd.to_numeric(_gl.get('pnl_pct', 0), errors='coerce').fillna(0)
+            _gl['outcome'] = _gl.get('outcome', 'PENDING').fillna('PENDING')
+            _gl['type']    = _gl.get('type', '').fillna('')
+            _gl['sym']     = _gl.get('symbol', '').str.replace('/USDT:USDT','').str.replace('/USDT','')
+
+            _gl_closed  = _gl[_gl['outcome'].isin(['WIN','LOSS','TP_HIT','SL_HIT'])]
+            _gl_pending = _gl[_gl['outcome'] == 'PENDING']
+            _gl_wins    = _gl_closed[_gl_closed['pnl_pct'] > 0]
+            _gl_losses  = _gl_closed[_gl_closed['pnl_pct'] < 0]
+
+            # Summary stats
+            _gc1, _gc2, _gc3, _gc4, _gc5, _gc6 = st.columns(6)
+            _gc1.metric("Total Signals", len(_gl))
+            _gc2.metric("Closed", len(_gl_closed))
+            _gc3.metric("Pending", len(_gl_pending))
+            _gc4.metric("Win Rate", f"{len(_gl_wins)/max(len(_gl_closed),1)*100:.0f}%" if len(_gl_closed) > 0 else "—")
+            _gc5.metric("Avg Win", f"+{_gl_wins['pnl_pct'].mean():.1f}%" if len(_gl_wins) > 0 else "—")
+            _gc6.metric("Avg Loss", f"{_gl_losses['pnl_pct'].mean():.1f}%" if len(_gl_losses) > 0 else "—")
+
+            # Per signal-type breakdown
+            if len(_gl_closed) > 0:
+                st.markdown("**Performance by Signal Type:**")
+                _type_rows = []
+                for _t in _gl['type'].unique():
+                    _tdf = _gl_closed[_gl_closed['type'] == _t]
+                    if len(_tdf) == 0: continue
+                    _tw = _tdf[_tdf['pnl_pct'] > 0]
+                    _wr = len(_tw)/len(_tdf)*100
+                    _apnl = _tdf['pnl_pct'].mean()
+                    _verdict = "✅ GOOD" if _wr >= 55 and _apnl > 0 else ("⚠️ MARGINAL" if _wr >= 45 else "❌ AVOID")
+                    _type_rows.append({'Type': _t, 'Signals': len(_tdf),
+                                       'Win Rate': f"{_wr:.0f}%", 'Avg P&L': f"{_apnl:+.2f}%",
+                                       'Total P&L': f"{_tdf['pnl_pct'].sum():+.2f}%",
+                                       'Verdict': _verdict})
+                if _type_rows:
+                    _type_df = pd.DataFrame(_type_rows).sort_values('Avg P&L', ascending=False)
+                    st.dataframe(_type_df, use_container_width=True, hide_index=True)
+
+            # Overall verdict
+            if len(_gl_closed) >= 5:
+                _gl_total = _gl_closed['pnl_pct'].sum()
+                _gl_wr = len(_gl_wins)/len(_gl_closed)*100
+                _gl_pf = abs(_gl_wins['pnl_pct'].sum()) / max(abs(_gl_losses['pnl_pct'].sum()), 0.01)
+                _gl_col = "#059669" if _gl_total > 0 else "#dc2626"
+                _gl_verdict = "✅ PROFITABLE" if _gl_total > 0 else "❌ LOSING"
+                st.markdown(f'''<div style="background:{'#f0fdf4' if _gl_total>0 else '#fef2f2'};border:1.5px solid {_gl_col};border-radius:8px;padding:12px 18px;margin:10px 0;">
+                  <span style="font-family:monospace;font-size:.75rem;font-weight:900;color:{_gl_col};">{_gl_verdict}</span>
+                  <span style="font-family:monospace;font-size:.65rem;color:#475569;margin-left:16px;">
+                    Total P&L: <b style="color:{_gl_col};">{_gl_total:+.1f}%</b> across {len(_gl_closed)} closed signals &nbsp;|&nbsp;
+                    Win Rate: <b>{_gl_wr:.0f}%</b> &nbsp;|&nbsp;
+                    Profit Factor: <b>{_gl_pf:.2f}</b> &nbsp;|&nbsp;
+                    Pending: <b>{len(_gl_pending)}</b>
+                  </span>
+                </div>''', unsafe_allow_html=True)
+            else:
+                st.info(f"📊 {len(_gl)} G/L signals logged, {len(_gl_closed)} closed. Need at least 5 closed signals for analysis.")
+
+        except Exception as e:
+            st.error(f"G/L analysis error: {e}")
+    else:
+        st.markdown('<div style="font-family:monospace;font-size:.65rem;color:#94a3b8;padding:8px 0;">No G/L signals logged yet — run a G/L scan to build history</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 3: COMBINED VERDICT
+    # ═══════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="scanner-section-label">🏆 COMBINED SCANNER VERDICT</div>', unsafe_allow_html=True)
+
+    _has_apex_data = not _insp_apex.empty and len(_insp_apex) >= 5
+    _has_gl_data   = not _insp_gl.empty and len(_insp_gl) >= 5
+
+    if not _has_apex_data and not _has_gl_data:
+        st.info("Run scans for a few days to build enough history for a meaningful verdict. The Inspector needs at least 5 closed signals per scanner.")
+    else:
+        _rows = []
+        if _has_apex_data:
+            try:
+                _ax2 = _insp_apex.copy()
+                _ax2['price'] = pd.to_numeric(_ax2.get('price', _ax2.get('close', 0)), errors='coerce').fillna(0)
+                _ax2['tp']    = pd.to_numeric(_ax2.get('tp2', _ax2.get('tp', 0)), errors='coerce').fillna(0)
+                _ax2['sl']    = pd.to_numeric(_ax2.get('sl', 0), errors='coerce').fillna(0)
+                _ax2['dir']   = _ax2.get('type', 'LONG')
+                _ax2['pnl']   = _ax2.apply(lambda r: (
+                    round((r['tp']-r['price'])/r['price']*100 if r['dir']=='LONG' else (r['price']-r['tp'])/r['price']*100, 2)
+                    if r.get('status') in ('TP_HIT','WIN') and r['tp']>0 and r['price']>0
+                    else round((r['sl']-r['price'])/r['price']*100 if r['dir']=='LONG' else (r['price']-r['sl'])/r['price']*100, 2)
+                    if r.get('status') in ('SL_HIT','LOSS') and r['sl']>0 and r['price']>0
+                    else None), axis=1)
+                _ax2_c = _ax2[_ax2['pnl'].notna()]
+                if len(_ax2_c) >= 3:
+                    _wr2 = len(_ax2_c[_ax2_c['pnl']>0])/len(_ax2_c)*100
+                    _pnl2 = _ax2_c['pnl'].mean()
+                    _rows.append({'Scanner':'🔥 APEX+Sentinel','Signals':len(_ax2_c),'Win Rate':f"{_wr2:.0f}%",'Avg P&L':f"{_pnl2:+.2f}%",
+                                  'Profitable': _pnl2 > 0,'wr_num':_wr2})
+            except: pass
+
+        if _has_gl_data:
+            try:
+                _gl2 = _insp_gl.copy()
+                _gl2['pnl_pct'] = pd.to_numeric(_gl2.get('pnl_pct',0), errors='coerce').fillna(0)
+                _gl2c = _gl2[_gl2['outcome'].isin(['WIN','LOSS','TP_HIT','SL_HIT'])]
+                if len(_gl2c) >= 3:
+                    _wr3 = len(_gl2c[_gl2c['pnl_pct']>0])/len(_gl2c)*100
+                    _pnl3 = _gl2c['pnl_pct'].mean()
+                    _rows.append({'Scanner':'📊 G/L Scanner','Signals':len(_gl2c),'Win Rate':f"{_wr3:.0f}%",'Avg P&L':f"{_pnl3:+.2f}%",
+                                  'Profitable':_pnl3>0,'wr_num':_wr3})
+            except: pass
+
+        if _rows:
+            for _row in _rows:
+                _rc = "#059669" if _row['Profitable'] else "#dc2626"
+                _ri = "✅" if _row['Profitable'] else "❌"
+                st.markdown(f'''<div style="background:{'#f0fdf4' if _row['Profitable'] else '#fef2f2'};border:1px solid {_rc}33;border-radius:8px;padding:10px 16px;margin:6px 0;display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-family:monospace;font-size:.72rem;font-weight:700;">{_ri} {_row['Scanner']}</span>
+                  <span style="font-family:monospace;font-size:.65rem;color:#475569;">{_row['Signals']} signals &nbsp;·&nbsp; WR: <b>{_row['Win Rate']}</b> &nbsp;·&nbsp; Avg P&L: <b style="color:{_rc};">{_row['Avg P&L']}</b></span>
+                </div>''', unsafe_allow_html=True)
+        else:
+            st.info("Not enough closed signals yet for combined verdict.")
+
+    st.markdown("---")
+    st.markdown('<div style="font-family:monospace;font-size:.58rem;color:#94a3b8;">💡 Tip: The more signals logged, the more reliable this analysis becomes. Aim for 20+ closed signals per scanner before making decisions based on this data.</div>', unsafe_allow_html=True)
