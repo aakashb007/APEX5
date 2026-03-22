@@ -7551,11 +7551,11 @@ else:
     # _now_ts already defined globally above
     for _r in results:
         try:
-            import datetime
+            import datetime as _dt_mod
             _st = _r.get('scan_time','')
             if _st:
-                _dt = datetime.datetime.strptime(_st[:19], '%Y-%m-%d %H:%M:%S')
-                _age_min = (_now_ts - _dt.replace(tzinfo=datetime.timezone.utc).timestamp()) / 60
+                _dt = _dt_mod.datetime.strptime(_st[:19], '%Y-%m-%d %H:%M:%S')
+                _age_min = (_now_ts - _dt.replace(tzinfo=_dt_mod.timezone.utc).timestamp()) / 60
             else:
                 _age_min = 0
         except:
