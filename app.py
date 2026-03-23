@@ -1904,7 +1904,7 @@ def _gl_check_preloser_star(df_5m, df_4h, s, symbol):
     except: return None
 
 
-def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
+def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None, instant_webhook=None, instant_alerted=None):
     """
     Gainers & Losers scanner — fully independent.
     Fetches live tickers from exchange, ranks by 24H % change,
@@ -2017,6 +2017,15 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
                         sig['chg_4h'] = round(chg_4h, 2)
                         sig['chg_1h'] = round(chg_1h, 2)
                         results.append(sig)
+                        # ── Fire Discord IMMEDIATELY — don't wait for scan to finish ──
+                        if instant_webhook:
+                            try:
+                                _sid_now = f"{sig['symbol']}_{sig['type']}_{datetime.now().strftime('%Y%m%d%H')}"
+                                if instant_alerted is None or _sid_now not in instant_alerted:
+                                    send_gl_discord_alert(instant_webhook, sig)
+                                    if instant_alerted is not None:
+                                        instant_alerted.add(_sid_now)
+                            except: pass
 
             except: continue
 
@@ -2050,6 +2059,15 @@ def run_gl_scan(coin_list, s, exchange_clients, status_placeholder=None):
                         sig['chg_4h'] = round(chg_4h, 2)
                         sig['chg_1h'] = round(chg_1h, 2)
                         results.append(sig)
+                        # ── Fire Discord IMMEDIATELY ──
+                        if instant_webhook:
+                            try:
+                                _sid_now = f"{sig['symbol']}_{sig['type']}_{datetime.now().strftime('%Y%m%d%H')}"
+                                if instant_alerted is None or _sid_now not in instant_alerted:
+                                    send_gl_discord_alert(instant_webhook, sig)
+                                    if instant_alerted is not None:
+                                        instant_alerted.add(_sid_now)
+                            except: pass
             except: continue
 
     results.sort(key=lambda x: abs(x.get('chg_4h', 0)), reverse=True)
@@ -6576,8 +6594,10 @@ if nav == "📈 Inspector":
     st.markdown('<div class="section-h">📈 Signal Inspector — Long-Term Profitability Analysis</div>', unsafe_allow_html=True)
     st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-bottom:16px;">Tracks every signal from every scanner. Checks actual price outcome after 1h, 4h, 24h. Tells you which scanner and signal type is genuinely profitable over time.</div>', unsafe_allow_html=True)
 
-    # ── Inspector data file ───────────────────────────────────────────────
-    INSPECTOR_FILE = '/content/signal_inspector.csv'
+    # ── Inspector data file — works on Streamlit Cloud + Colab ───────────
+    import os as _os_ins
+    _ins_base = '/content' if _os_ins.path.exists('/content') else '.'
+    INSPECTOR_FILE = f'{_ins_base}/signal_inspector.csv'
     INSPECTOR_COLS = ['id','ts','scanner','signal_type','symbol','direction','entry_price',
                       'sl','tp','rr','score','tf',
                       'p1h','p4h','p24h','outcome_1h','outcome_4h','outcome_24h',
@@ -7155,7 +7175,8 @@ if do_scan:
                 pass
 
         # ── Load persisted logged_sigs from file to survive restarts ─────
-        _lsig_file = '/content/logged_sigs.txt'
+        _lsig_base = '/content' if os.path.exists('/content') else '.'
+        _lsig_file = f'{_lsig_base}/logged_sigs.txt'
         if 'logged_sigs_loaded' not in st.session_state:
             try:
                 _today = datetime.now().strftime('%Y-%m-%d')
@@ -8029,7 +8050,9 @@ if _gl_pre_pending:
         s_pre['gl_alert_bounce'] = False
         s_pre['gl_alert_breakdown'] = False
         gl_status.markdown('<div style="font-family:monospace;font-size:.65rem;color:#7c3aed;">👀 Scanning flat coins for Pre-Gainer/Pre-Loser...</div>', unsafe_allow_html=True)
-        pre_signals = run_gl_scan([], s_pre, exchange_clients, status_placeholder=gl_status)
+        pre_signals = run_gl_scan([], s_pre, exchange_clients, status_placeholder=gl_status,
+                                  instant_webhook=eff_s.get('discord_webhook') or None,
+                                  instant_alerted=st.session_state.get('gl_alerted', set()))
         if pre_signals:
             existing = st.session_state.get('gl_results', [])
             active_only = [s for s in existing if s.get('type') not in ['PRE_GAINER','PRE_LOSER']]
@@ -8082,7 +8105,9 @@ elif gl_should_run and not _gl_active_done:
             s_active['gl_alert_pregainer'] = False
             s_active['gl_alert_preloser'] = False
             gl_status.markdown('<div style="font-family:monospace;font-size:.65rem;color:#0284c7;">⚡ Scanning top gainers/losers for active signals...</div>', unsafe_allow_html=True)
-            active_signals = run_gl_scan([], s_active, exchange_clients, status_placeholder=gl_status)
+            active_signals = run_gl_scan([], s_active, exchange_clients, status_placeholder=gl_status,
+                                         instant_webhook=eff_s.get('discord_webhook') or None,
+                                         instant_alerted=st.session_state.get('gl_alerted', set()))
             # Fire active signals immediately — rerun to display before pre-signals
             if active_signals:
                 existing = st.session_state.get('gl_results', [])
