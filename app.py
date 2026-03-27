@@ -207,7 +207,7 @@ DEFAULT_SETTINGS = {
     "gl_alert_pullback":True,"gl_alert_breakout":True,
     "gl_alert_bounce":True,"gl_alert_breakdown":True,
     "gl_alert_pregainer":True,"gl_alert_preloser":True,
-    "symbol_blacklist":"","ms_refresh_interval":5,
+    "symbol_blacklist":"PAXG,WBTC,WETH,STETH,FDUSD,USDTUSDT","ms_refresh_interval":5,
 
     # ── S17: Backtest ──
     "backtest_min_score":50,"backtest_days":30,
@@ -730,6 +730,19 @@ def _journal_check_hits(df, prices, s):
         if hit:
             df.at[i,'status']=hit; updated=True
             hits.append({'symbol':sym,'hit':hit,'price':price,'tp':tp,'sl':sl,'type':sig})
+            # ── Write SL cooldown so veto system blocks re-entry for 4h ──
+            if hit == 'SL':
+                try:
+                    import time as _tc
+                    _sl_cd = st.session_state.get('sl_cooldowns', {})
+                    _sl_cd[f"{sym}_{sig}"] = _tc.time()
+                    st.session_state['sl_cooldowns'] = _sl_cd
+                    # Track daily SL count for circuit breaker
+                    _today = datetime.now().strftime('%Y-%m-%d')
+                    _daily_sl = st.session_state.get('daily_sl_count', {})
+                    _daily_sl[_today] = _daily_sl.get(_today, 0) + 1
+                    st.session_state['daily_sl_count'] = _daily_sl
+                except: pass
     return df,hits,updated
 
 def _fire_journal_alerts(hits, s, source="Scan"):
@@ -847,17 +860,19 @@ def fmt(n):
     return f"${n:.0f}"
 
 def pump_color(score, is_sniper=False):
-    if is_sniper or score>=90: return "#ff0000"
-    if score>=70: return "#dc2626"
-    if score>=45: return "#d97706"
-    if score>=25: return "#2563eb"
+    if score >= 97: return "#7c0000"   # 2R — deep red — elite
+    if score >= 93: return "#dc2626"   # 1.5R — red — high conviction
+    if score >= 85: return "#ea580c"   # 1R — orange-red — strong
+    if score >= 75: return "#d97706"   # 0.5R — amber — solid
+    if score >= 60: return "#2563eb"   # cautious — blue
     return "#6b7280"
 
 def pump_label(score, sig, is_sniper=False):
-    if is_sniper or score>=90: return "🎯 GOD-TIER SETUP"
-    if score>=70: return "🔥 PUMP IMMINENT" if sig=="LONG" else "🩸 DUMP IMMINENT"
-    if score>=45: return "⚡ BUILDING PUMP" if sig=="LONG" else "⚡ BUILDING DUMP"
-    if score>=25: return "📡 EARLY LONG" if sig=="LONG" else "📡 EARLY SHORT"
+    if score >= 97: return "💎 ELITE SETUP — 2R MAX SIZE"
+    if score >= 93: return "🎯 HIGH CONVICTION — 1.5R"
+    if score >= 85: return "🔥 STRONG SETUP — 1.0R" if sig=="LONG" else "🩸 STRONG SHORT — 1.0R"
+    if score >= 75: return "⚡ SOLID SETUP — 0.5R" if sig=="LONG" else "⚡ SOLID SHORT — 0.5R"
+    if score >= 60: return "📡 EARLY SIGNAL — 0.25R"
     return "— WEAK"
 
 def classify(res):
@@ -3093,14 +3108,129 @@ class PrePumpScreener:
         except: pass
         pump_score += stophunt_sc; bd['stop_hunt'] = stophunt_sc
         pump_score=max(0,min(pump_score,100))
+        raw_score = pump_score  # store before rescaling
 
-        # ── ACCURACY GATES ────────────────────────────────────────────────
+        # ══════════════════════════════════════════════════════════════════
+        # TIERED VETO SYSTEM — Hard blocks before any score check
+        # Score 100 = rare elite setup. Vetoes protect capital first.
+        # Balanced — strict on genuine danger, not on normal variation.
+        # ══════════════════════════════════════════════════════════════════
+        fng = st.session_state.get('fng_val', 50)
+        _veto_reason = None
+
+        # Veto 1: Extreme Fear blocks ALL signals (F&G ≤ 20)
+        if fng <= 20:
+            _veto_reason = f"F&G Extreme Fear ({fng}) — market irrational, all signals blocked"
+        # Veto 2: Deep Fear blocks SHORTs — already oversold, bounce risk high
+        elif sig == "SHORT" and fng <= 30:
+            _veto_reason = f"F&G Fear ({fng}) — market oversold, new SHORTs have high reversal risk"
+        # Veto 3: Extreme Greed blocks LONG — already overextended
+        elif sig == "LONG" and fng >= 85:
+            _veto_reason = f"F&G Extreme Greed ({fng}) — market overheated, LONG dump risk"
+
+        # Veto 4: RSI overextended — block chasing moves
+        if not _veto_reason:
+            if sig == "LONG" and rsi > 78:
+                _veto_reason = f"RSI {rsi:.0f} overbought — late entry, high reversal risk"
+            elif sig == "SHORT" and rsi < 22:
+                _veto_reason = f"RSI {rsi:.0f} oversold — late entry, high bounce risk"
+
+        # Veto 5: BTC crashed hard — alt LONGs follow down (only -3% threshold)
+        if not _veto_reason and sig == "LONG" and dsym not in ('BTC','WBTC'):
+            try:
+                _btc_chg = st.session_state.get('btc_1h_chg', 0)
+                if _btc_chg < -3.0:
+                    _veto_reason = f"BTC down {_btc_chg:.1f}% in 1H — alt LONGs follow down"
+            except: pass
+
+        # Veto 6: Volume completely dead — no liquidity
+        if not _veto_reason:
+            try:
+                _vol_ratio_now = lvol / vma if vma > 0 else 1
+                if _vol_ratio_now < 0.15:
+                    _veto_reason = f"Volume {_vol_ratio_now:.2f}x avg — near-zero liquidity, do not trade"
+            except: pass
+
+        # Veto 7: Minimum Tier-1 structural confirmation
+        # Need at least 2 of 5 core signals — prevents pure noise trades
+        # Loose enough to keep signal flow, tight enough to ensure real structure
+        if not _veto_reason:
+            _tier1 = sum([
+                bd.get('whale_wall', 0) >= 10,      # whale wall present
+                bd.get('funding', 0) >= 10,          # funding supports direction
+                bd.get('oi_spike', 0) >= 7,          # OI confirming
+                bd.get('vol_surge', 0) >= 8,         # volume elevated
+                bd.get('mtf', 0) >= 10,              # at least 2/3 TFs aligned
+            ])
+            if _tier1 < 2:
+                _veto_reason = f"Insufficient structural confirmation ({_tier1}/5 core signals) — need 2+"
+
+        # Veto 8: Score 100 quality gate — must have 3+ strong signals to earn 100
+        # Prevents "everything fired weakly" from looking like elite setup
+        # Signals still show as 97-99 if downgraded — not blocked
+        if not _veto_reason and raw_score >= 160:  # would show as 100
+            _tier1_100 = sum([
+                bd.get('whale_wall', 0) >= 15,       # strong whale wall
+                bd.get('funding', 0) >= 15,           # strong funding
+                bd.get('oi_spike', 0) >= 10,          # real OI confirmation
+                bd.get('vol_surge', 0) >= 14,         # significant volume
+                bd.get('mtf', 0) >= 20,               # all 3 TFs aligned
+                bd.get('sentiment', 0) >= 15,          # strong smart money signal
+                bd.get('orderflow', 0) >= 10,          # confirmed order flow
+                bd.get('stop_hunt', 0) >= 15,          # stop hunt zone
+            ])
+            if _tier1_100 < 3:
+                # Downgrade to max 99 — signal still shows, just not 100
+                raw_score = min(raw_score, 180)  # caps at display 99
+            elif _tier1_100 < 4:
+                raw_score = min(raw_score, 185)  # caps at display 99
+
+        # Veto 9: Same coin + same direction hit SL recently — prevent revenge trading
+        # Checks st.session_state for recent SL on this coin+direction
+        if not _veto_reason:
+            try:
+                _sl_cooldowns = st.session_state.get('sl_cooldowns', {})
+                _cool_key = f"{dsym}_{sig}"
+                _cool_ts = _sl_cooldowns.get(_cool_key, 0)
+                import time as _tc
+                if _tc.time() - _cool_ts < 14400:  # 4 hours in seconds
+                    _mins_left = int((14400 - (_tc.time() - _cool_ts)) / 60)
+                    _veto_reason = f"{dsym} {sig} hit SL recently — {_mins_left}min cooldown remaining"
+            except: pass
+
+        if _veto_reason:
+            return None  # vetoed
+
+        # ── ACCURACY GATES (existing) ─────────────────────────────────────
         active_cats=sum(1 for k,v in bd.items() if v>0 and k not in ('session','mtf'))
         if active_cats<s.get('min_active_signals',3): return None
         if len(reasons)<s.get('min_reasons',1): return None
-        fng=st.session_state.get('fng_val',50)
-        if sig=="LONG" and fng<s.get('fng_long_threshold',30) and pump_score<60: return None
-        if sig=="SHORT" and fng>s.get('fng_short_threshold',70) and pump_score<60: return None
+
+        # ── SCORE RESCALING — make 100 truly rare and meaningful ──────────
+        # ── SCORE RESCALING ───────────────────────────────────────────────
+        # Balanced scale: strong signals still reach 90+, score 100 is rare.
+        # Raw 120+ → display 90 (same as before, unchanged for regular signals)
+        # Raw 190+ → display 100 (was 160 — makes 100 truly elite)
+        def _rescale(r):
+            if r <= 0:   return 0
+            if r < 60:   return max(0, int(r))           # below 60 unchanged
+            if r < 80:   return 60 + int((r-60)/20*12)  # 60-71
+            if r < 100:  return 72 + int((r-80)/20*10)  # 72-81
+            if r < 120:  return 82 + int((r-100)/20*8)  # 82-89
+            if r < 140:  return 90 + int((r-120)/20*4)  # 90-93
+            if r < 165:  return 94 + int((r-140)/25*4)  # 94-97
+            if r < 190:  return 98 + int((r-165)/25*1)  # 98-99
+            return 100                                    # 100 = truly elite (raw 190+)
+        pump_score = _rescale(raw_score)
+        bd['raw_score'] = raw_score
+
+        # ── POSITION SIZE SUGGESTION ──────────────────────────────────────
+        if pump_score >= 97:   _pos_size = "2.0R — Max size"
+        elif pump_score >= 93: _pos_size = "1.5R — High conviction"
+        elif pump_score >= 85: _pos_size = "1.0R — Standard"
+        elif pump_score >= 75: _pos_size = "0.5R — Cautious"
+        else:                  _pos_size = "0.25R — Minimal"
+        bd['suggested_position'] = _pos_size
 
         # ── SL: 4H OB + FVG ──────────────────────────────────────────────
         bull_obs_4h,bear_obs_4h,bull_fvgs,bear_fvgs=[],[],[],[]
@@ -3397,6 +3527,19 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
     if dual_confirmed:
         dual_html='<div class="dual-confirm">🔥 DUAL CONFIRMED — Scanner + Sentinel both flagged this coin — HIGH CONVICTION SIGNAL</div>'
 
+    # ── Position size badge from scoring system ───────────────────────────
+    _pos_size_card = bd.get('suggested_position', '')
+    _raw_score_card = bd.get('raw_score', sc)
+    if _pos_size_card:
+        _ps_color = "#7c0000" if sc>=97 else ("#dc2626" if sc>=93 else ("#ea580c" if sc>=85 else ("#d97706" if sc>=75 else "#2563eb")))
+        _pos_badge = (f'<div style="background:{_ps_color}11;border:1px solid {_ps_color}44;border-radius:5px;'
+                      f'padding:3px 10px;margin:3px 0 5px 0;display:inline-block;">'
+                      f'<span style="font-family:monospace;font-size:.58rem;font-weight:700;color:{_ps_color};">📐 SUGGESTED SIZE: {_pos_size_card}</span>'
+                      f'<span style="font-family:monospace;font-size:.55rem;color:#94a3b8;margin-left:8px;">Raw: {_raw_score_card}/409</span>'
+                      f'</div>')
+    else:
+        _pos_badge = ''
+
     # ── AI Holistic Analysis badge ────────────────────────────────────────────
     _ai_scores = st.session_state.get('ai_trade_scores', {})
     _sym_base = res.get('symbol','').replace('/USDT:USDT','').replace('/USDT','').upper()
@@ -3611,7 +3754,7 @@ def render_card(res, is_sniper=False, dual_confirmed=False):
       R:R <span style="color:{rr_col};font-weight:600;">{rr_str}</span><br>RSI <span style="color:var(--text);">{_rsi:.1f}</span><br>{session}
     </div>
   </div>
-  {dual_html}{ai_badge_html}{freshness_html}{catalyst_banner_html}{warnings_html}
+  {dual_html}{_pos_badge}{ai_badge_html}{freshness_html}{catalyst_banner_html}{warnings_html}
   <div class="sig-pips">
     <div class="pip-item">{pip(bd.get('ob_imbalance',0),4,14)} OB</div>
     <div class="pip-item">{pip(bd.get('funding',0)+bd.get('funding_hist',0),3,15)} FUNDING</div>
@@ -7026,6 +7169,23 @@ if _in_kill_zone and do_scan:
       </div>
     </div>''', unsafe_allow_html=True)
 
+# ── Daily circuit breaker — warn after 3 SLs today ────────────────────────
+_today_key = datetime.now().strftime('%Y-%m-%d')
+_daily_sl_today = st.session_state.get('daily_sl_count', {}).get(_today_key, 0)
+if _daily_sl_today >= 5:
+    do_scan = False
+    st.markdown(f'''<div style="background:#1a0505;border:1px solid #dc262644;border-radius:8px;padding:10px 16px;margin-bottom:10px;">
+      <div style="font-family:monospace;font-size:.7rem;font-weight:700;color:#dc2626;">🔴 DAILY CIRCUIT BREAKER — {_daily_sl_today} SLs today</div>
+      <div style="font-family:monospace;font-size:.6rem;color:#94a3b8;margin-top:3px;">Scanner paused — market conditions unfavorable. Reset in Settings or wait for tomorrow.</div>
+    </div>''', unsafe_allow_html=True)
+    if st.button("🔓 Override — Resume Scanning", key="circuit_breaker_override"):
+        st.session_state['daily_sl_count'] = {_today_key: 0}
+        st.rerun()
+elif _daily_sl_today >= 3:
+    st.markdown(f'''<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 14px;margin-bottom:8px;">
+      <div style="font-family:monospace;font-size:.65rem;font-weight:700;color:#d97706;">⚠️ CAUTION — {_daily_sl_today} SLs today. Market may be unfavorable. Be selective.</div>
+    </div>''', unsafe_allow_html=True)
+
 if do_scan:
     try:
         screener=PrePumpScreener(
@@ -7291,7 +7451,10 @@ if do_scan:
                     # Discord
                     if eff_s.get('discord_webhook'):
                         dc_color=0x059669 if r['type']=='LONG' else 0xdc2626
-                        sig_hdr=("📗 **LONG**" if r['type']=='LONG' else "📕 **SHORT**")+f" | Score: **{r['pump_score']}/100**"
+                        _raw_sc = r.get('signal_breakdown',{}).get('raw_score', r['pump_score'])
+                        _pos_dc = r.get('signal_breakdown',{}).get('suggested_position','')
+                        sig_hdr = ("📗 **LONG**" if r['type']=='LONG' else "📕 **SHORT**")+f" | Score: **{r['pump_score']}/100** (raw:{_raw_sc})"
+                        if _pos_dc: sig_hdr += f" | 📐 **{_pos_dc}**"
                         _dst = r.get('dst_signal')
                         _dst_confirmed = r.get('dst_confirmed', False)
                         if _dst_confirmed and _dst:
