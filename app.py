@@ -8184,6 +8184,8 @@ if _ms:
 # ── GAINERS & LOSERS SCANNER SECTION ─────────────────────────────────────
 st.markdown('---')
 st.markdown('<div class="scanner-section-label">📊 GAINERS & LOSERS SCANNER — 4H Catalyst + 5m Entry</div>', unsafe_allow_html=True)
+if _in_kill_zone:
+    st.markdown('<div style="font-family:monospace;font-size:.6rem;background:#f0fdf4;border:1px solid #86efac;border-radius:5px;padding:4px 10px;margin-bottom:6px;color:#059669;">✅ G/L Scanner runs independently — not affected by Kill Zone or APEX pause</div>', unsafe_allow_html=True)
 gl_col1, gl_col2, gl_col3 = st.columns([2,2,4])
 with gl_col1:
     gl_run = st.button("▶ Run G/L Scan", use_container_width=True, key='gl_run_btn')
@@ -8195,7 +8197,7 @@ with gl_col3:
 gl_status = st.empty()
 gl_last_ts = st.session_state.get('gl_last_ts', 0)
 gl_never_run = gl_last_ts == 0
-gl_should_run = gl_run or gl_never_run or (time.time() - gl_last_ts >= gl_interval * 60)
+gl_should_run = gl_run or (gl_last_ts > 0 and (time.time() - gl_last_ts >= gl_interval * 60))
 
 _gl_active_done = st.session_state.pop('gl_active_done', False)
 _gl_pre_pending = st.session_state.pop('gl_pre_pending', False)
