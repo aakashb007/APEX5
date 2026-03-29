@@ -2868,17 +2868,139 @@ class PrePumpScreener:
             if r0>0 and r1>0:
                 if sig=="LONG":
                     lw=min(float(c0['open']),float(c0['close']))-float(c0['low'])
-                    if lw/r0>0.6 and abs(b0)/r0<0.3: tech_sc+=pp; reasons.append("🔨 Hammer candle — buyers defended strongly")
-                    elif b0>0 and b1<0 and abs(b0)>abs(b1)*1.1: tech_sc+=pp; reasons.append("🕯️ Bullish engulfing")
+                    # Hammer / Pin Bar — buyers defended the low aggressively
+                    if lw/r0>0.6 and abs(b0)/r0<0.3:
+                        tech_sc+=pp; reasons.append("🔨 Hammer candle — buyers defended strongly")
+                    # Bullish engulfing
+                    elif b0>0 and b1<0 and abs(b0)>abs(b1)*1.1:
+                        tech_sc+=pp; reasons.append("🕯️ Bullish engulfing")
+                    # 3 green candles with rising volume
                     elif all(float(df_f.iloc[-k]['close'])>float(df_f.iloc[-k]['open']) for k in [1,2,3]) and float(df_f['volume'].iloc[-1])>float(df_f['volume'].iloc[-2])>float(df_f['volume'].iloc[-3]):
                         tech_sc+=pp; reasons.append("📈 3 consecutive green candles with rising volume")
-                else:
+                    # ── NEW: Capitulation bottom pattern ──────────────────
+                    # Big red candle with huge volume → followed by recovery
+                    try:
+                        _vol_now = float(df_f['volume'].iloc[-1])
+                        _vol_prev = float(df_f['volume'].iloc[-2])
+                        _vol_ma20 = float(df_f['volume'].rolling(20).mean().iloc[-1])
+                        _red_prev = float(c1['close']) < float(c1['open'])
+                        _green_now = b0 > 0
+                        _vol_climax = _vol_prev > _vol_ma20 * 2.5  # volume spike on red candle
+                        _recovering = _green_now and _vol_now > _vol_ma20 * 1.2
+                        if _red_prev and _vol_climax and _recovering:
+                            tech_sc += pp + 4  # extra weight — high reliability
+                            reasons.append(f"💥 Capitulation bottom — vol spike {_vol_prev/_vol_ma20:.1f}x on red, now recovering")
+                    except: pass
+                    # ── NEW: Morning Star (3-candle reversal) ─────────────
+                    # Big red → small indecision → big green
+                    try:
+                        b2 = float(c2['close']) - float(c2['open'])
+                        r2 = float(c2['high']) - float(c2['low'])
+                        _big_red = b2 < 0 and abs(b2)/max(r2,0.0001) > 0.5
+                        _small_body = abs(b1)/max(r1,0.0001) < 0.3
+                        _big_green = b0 > 0 and abs(b0)/max(r0,0.0001) > 0.5
+                        if _big_red and _small_body and _big_green:
+                            tech_sc += pp + 2
+                            reasons.append("🌅 Morning Star pattern — strong 3-candle reversal signal")
+                    except: pass
+                    # ── NEW: Wick rejection cluster (multiple lower wicks) ─
+                    # Last 3 candles all have long lower wicks = price rejection at same level
+                    try:
+                        _wick_rejections = 0
+                        for _ki in range(1, 4):
+                            _kc = df_f.iloc[-_ki]
+                            _kr = float(_kc['high']) - float(_kc['low'])
+                            _klw = min(float(_kc['open']), float(_kc['close'])) - float(_kc['low'])
+                            if _kr > 0 and _klw / _kr > 0.45:
+                                _wick_rejections += 1
+                        if _wick_rejections >= 3:
+                            tech_sc += pp
+                            reasons.append(f"📌 Triple lower wick rejection — buyers defending same level 3x")
+                        elif _wick_rejections == 2:
+                            tech_sc += pp // 2
+                            reasons.append(f"📌 Double lower wick rejection — support holding")
+                    except: pass
+                else:  # SHORT
                     uw=float(c0['high'])-max(float(c0['open']),float(c0['close']))
-                    if uw/r0>0.6 and abs(b0)/r0<0.3: tech_sc+=pp; reasons.append("🌠 Shooting star — sellers rejected rally")
-                    elif b0<0 and b1>0 and abs(b0)>abs(b1)*1.1: tech_sc+=pp; reasons.append("🕯️ Bearish engulfing")
+                    # Shooting star
+                    if uw/r0>0.6 and abs(b0)/r0<0.3:
+                        tech_sc+=pp; reasons.append("🌠 Shooting star — sellers rejected rally")
+                    # Bearish engulfing
+                    elif b0<0 and b1>0 and abs(b0)>abs(b1)*1.1:
+                        tech_sc+=pp; reasons.append("🕯️ Bearish engulfing")
+                    # 3 red candles with rising volume
                     elif all(float(df_f.iloc[-k]['close'])<float(df_f.iloc[-k]['open']) for k in [1,2,3]) and float(df_f['volume'].iloc[-1])>float(df_f['volume'].iloc[-2])>float(df_f['volume'].iloc[-3]):
                         tech_sc+=pp; reasons.append("📉 3 consecutive red candles with rising volume")
+                    # ── NEW: Exhaustion top pattern ────────────────────────
+                    # Big green candle with huge volume → followed by red reversal
+                    try:
+                        _vol_prev = float(df_f['volume'].iloc[-2])
+                        _vol_ma20 = float(df_f['volume'].rolling(20).mean().iloc[-1])
+                        _green_prev = float(c1['close']) > float(c1['open'])
+                        _red_now = b0 < 0
+                        _vol_climax = _vol_prev > _vol_ma20 * 2.5
+                        if _green_prev and _vol_climax and _red_now:
+                            tech_sc += pp + 4
+                            reasons.append(f"💥 Exhaustion top — vol spike {_vol_prev/_vol_ma20:.1f}x on green, now reversing")
+                    except: pass
+                    # ── NEW: Evening Star (3-candle top reversal) ─────────
+                    try:
+                        b2 = float(c2['close']) - float(c2['open'])
+                        r2 = float(c2['high']) - float(c2['low'])
+                        _big_green = b2 > 0 and abs(b2)/max(r2,0.0001) > 0.5
+                        _small_body = abs(b1)/max(r1,0.0001) < 0.3
+                        _big_red = b0 < 0 and abs(b0)/max(r0,0.0001) > 0.5
+                        if _big_green and _small_body and _big_red:
+                            tech_sc += pp + 2
+                            reasons.append("🌆 Evening Star pattern — strong 3-candle top reversal signal")
+                    except: pass
+                    # ── NEW: Triple upper wick rejection ──────────────────
+                    try:
+                        _wick_rejections = 0
+                        for _ki in range(1, 4):
+                            _kc = df_f.iloc[-_ki]
+                            _kr = float(_kc['high']) - float(_kc['low'])
+                            _kuw = float(_kc['high']) - max(float(_kc['open']), float(_kc['close']))
+                            if _kr > 0 and _kuw / _kr > 0.45:
+                                _wick_rejections += 1
+                        if _wick_rejections >= 3:
+                            tech_sc += pp
+                            reasons.append(f"📌 Triple upper wick rejection — sellers defending same level 3x")
+                        elif _wick_rejections == 2:
+                            tech_sc += pp // 2
+                            reasons.append(f"📌 Double upper wick rejection — resistance holding")
+                    except: pass
         except: pass
+
+        # ── StochRSI Reversal — catches PIPPIN-type setups ────────────────
+        # StochRSI at extreme (0 or 100) reversing = very high probability signal
+        try:
+            _high = df_f['high']; _low = df_f['low']; _close = df_f['close']
+            _rsi14 = 100 - 100/(1 + _close.diff().clip(lower=0).rolling(14).mean() /
+                     (-_close.diff().clip(upper=0).rolling(14).mean().replace(0, 1e-10)))
+            _rsi_min = _rsi14.rolling(14).min()
+            _rsi_max = _rsi14.rolling(14).max()
+            _stoch_rsi = (_rsi14 - _rsi_min) / (_rsi_max - _rsi_min + 1e-10) * 100
+            _srsi_now = float(_stoch_rsi.iloc[-1])
+            _srsi_prev = float(_stoch_rsi.iloc[-3])
+            if sig == "LONG":
+                # Was at 0 (max oversold), now recovering
+                if _srsi_prev <= 5 and _srsi_now >= 15:
+                    tech_sc += 10
+                    reasons.append(f"📊 StochRSI reversal from oversold ({_srsi_prev:.0f}→{_srsi_now:.0f}) — momentum flip")
+                elif _srsi_now <= 10:
+                    tech_sc += 3
+                    reasons.append(f"📊 StochRSI at extreme oversold ({_srsi_now:.0f}) — bounce high probability")
+            else:  # SHORT
+                # Was at 100 (max overbought), now falling
+                if _srsi_prev >= 95 and _srsi_now <= 85:
+                    tech_sc += 10
+                    reasons.append(f"📊 StochRSI reversal from overbought ({_srsi_prev:.0f}→{_srsi_now:.0f}) — momentum flip")
+                elif _srsi_now >= 90:
+                    tech_sc += 3
+                    reasons.append(f"📊 StochRSI at extreme overbought ({_srsi_now:.0f}) — reversal high probability")
+        except: pass
+
         pump_score+=tech_sc; bd['technicals']=tech_sc
 
         # 10 ── SESSION ────────────────────────────────────────────────────
