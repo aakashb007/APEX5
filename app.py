@@ -3237,7 +3237,7 @@ class PrePumpScreener:
         # Score 100 = rare elite setup. Vetoes protect capital first.
         # Balanced — strict on genuine danger, not on normal variation.
         # ══════════════════════════════════════════════════════════════════
-        fng = st.session_state.get('fng_val', 50)
+        fng = st.session_state.get('fng_val', 35)  # default 35 (Fear) if never fetched — safer than 50
         _veto_reason = None
 
         # Veto 1: Extreme Fear blocks ALL signals (F&G ≤ 20)
@@ -4032,10 +4032,15 @@ st.markdown('''<div style="background:#fff;border:1px solid #e5e7eb;border-radiu
 
 if time.time()-st.session_state.get('fng_last_fetch',0)>300:
     try:
-        fg=requests.get("https://api.alternative.me/fng/?limit=1",timeout=2).json()
+        fg=requests.get("https://api.alternative.me/fng/?limit=1",timeout=4).json()
         st.session_state.fng_val=int(fg['data'][0]['value']); st.session_state.fng_txt=fg['data'][0]['value_classification']
         st.session_state.fng_last_fetch=time.time()
-    except: pass
+    except:
+        # If fetch fails, keep last known value — don't reset to 50
+        # Only set to 50 if we've never fetched before
+        if st.session_state.get('fng_last_fetch', 0) == 0:
+            st.session_state.fng_val = 50
+            st.session_state.fng_txt = "Neutral (fetch failed)"
 
 fng_v=st.session_state.fng_val; fng_t=st.session_state.fng_txt
 fng_c="#059669" if fng_v>=60 else ("#dc2626" if fng_v<=40 else "#d97706")
@@ -7351,7 +7356,7 @@ if do_scan:
         import time as _time_pre, datetime as _dt_pre_mod
         _now_unix_pre = _time_pre.time()  # Unix timestamp (seconds since epoch)
         # _now_ts already defined globally above do_scan block
-        _fng_pre = st.session_state.get('fng_val', 50)
+        _fng_pre = st.session_state.get('fng_val', 35)
         for _r in st.session_state.results:
             try:
                 _st_str = _r.get('scan_time','')
@@ -7873,7 +7878,7 @@ else:
         _r['_freshness_pct'] = max(0, min(100, 100 - (_age_min / 30) * 100))
 
     # ── F&G context penalty ───────────────────────────────────────────────────
-    _fng = st.session_state.get('fng_val', 50)
+    _fng = st.session_state.get('fng_val', 35)
     for _r in results:
         _fg_penalty = 0
         _fg_note = ''
