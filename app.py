@@ -211,6 +211,7 @@ DEFAULT_SETTINGS = {
 
     # ── S17: Backtest ──
     "backtest_min_score":50,"backtest_days":30,
+    "backtest_mode":False,  # when True — disables all vetoes for data collection
 
     # ── S18: API Keys ──
     "tg_token":"","tg_chat_id":"",
@@ -3237,88 +3238,87 @@ class PrePumpScreener:
         # Score 100 = rare elite setup. Vetoes protect capital first.
         # Balanced — strict on genuine danger, not on normal variation.
         # ══════════════════════════════════════════════════════════════════
+        _backtest_mode = s.get('backtest_mode', False)
         fng = st.session_state.get('fng_val', 35)  # default 35 (Fear) if never fetched — safer than 50
         _veto_reason = None
 
-        # Veto 1: Extreme Fear blocks ALL signals (F&G ≤ 20)
-        if fng <= 20:
-            _veto_reason = f"F&G Extreme Fear ({fng}) — market irrational, all signals blocked"
-        # Veto 2: Deep Fear blocks SHORTs — already oversold, bounce risk high
-        elif sig == "SHORT" and fng <= 30:
-            _veto_reason = f"F&G Fear ({fng}) — market oversold, new SHORTs have high reversal risk"
-        # Veto 3: Extreme Greed blocks LONG — already overextended
-        elif sig == "LONG" and fng >= 85:
-            _veto_reason = f"F&G Extreme Greed ({fng}) — market overheated, LONG dump risk"
+        if _backtest_mode:
+            # ── BACKTEST MODE: skip all vetoes — collect every signal ──────
+            bd['backtest_mode'] = True
+        else:
+            # Veto 1: Extreme Fear blocks ALL signals (F&G ≤ 20)
+            if fng <= 20:
+                _veto_reason = f"F&G Extreme Fear ({fng}) — market irrational, all signals blocked"
+            # Veto 2: Deep Fear blocks SHORTs — already oversold, bounce risk high
+            elif sig == "SHORT" and fng <= 30:
+                _veto_reason = f"F&G Fear ({fng}) — market oversold, new SHORTs have high reversal risk"
+            # Veto 3: Extreme Greed blocks LONG — already overextended
+            elif sig == "LONG" and fng >= 85:
+                _veto_reason = f"F&G Extreme Greed ({fng}) — market overheated, LONG dump risk"
 
-        # Veto 4: RSI overextended — block chasing moves
-        if not _veto_reason:
-            if sig == "LONG" and rsi > 78:
-                _veto_reason = f"RSI {rsi:.0f} overbought — late entry, high reversal risk"
-            elif sig == "SHORT" and rsi < 22:
-                _veto_reason = f"RSI {rsi:.0f} oversold — late entry, high bounce risk"
+            # Veto 4: RSI overextended — block chasing moves
+            if not _veto_reason:
+                if sig == "LONG" and rsi > 78:
+                    _veto_reason = f"RSI {rsi:.0f} overbought — late entry, high reversal risk"
+                elif sig == "SHORT" and rsi < 22:
+                    _veto_reason = f"RSI {rsi:.0f} oversold — late entry, high bounce risk"
 
-        # Veto 5: BTC crashed hard — alt LONGs follow down (only -3% threshold)
-        if not _veto_reason and sig == "LONG" and dsym not in ('BTC','WBTC'):
-            try:
-                _btc_chg = st.session_state.get('btc_1h_chg', 0)
-                if _btc_chg < -3.0:
-                    _veto_reason = f"BTC down {_btc_chg:.1f}% in 1H — alt LONGs follow down"
-            except: pass
+            # Veto 5: BTC crashed hard — alt LONGs follow down (only -3% threshold)
+            if not _veto_reason and sig == "LONG" and dsym not in ('BTC','WBTC'):
+                try:
+                    _btc_chg = st.session_state.get('btc_1h_chg', 0)
+                    if _btc_chg < -3.0:
+                        _veto_reason = f"BTC down {_btc_chg:.1f}% in 1H — alt LONGs follow down"
+                except: pass
 
-        # Veto 6: Volume completely dead — no liquidity
-        if not _veto_reason:
-            try:
-                _vol_ratio_now = lvol / vma if vma > 0 else 1
-                if _vol_ratio_now < 0.15:
-                    _veto_reason = f"Volume {_vol_ratio_now:.2f}x avg — near-zero liquidity, do not trade"
-            except: pass
+            # Veto 6: Volume completely dead — no liquidity
+            if not _veto_reason:
+                try:
+                    _vol_ratio_now = lvol / vma if vma > 0 else 1
+                    if _vol_ratio_now < 0.15:
+                        _veto_reason = f"Volume {_vol_ratio_now:.2f}x avg — near-zero liquidity, do not trade"
+                except: pass
 
-        # Veto 7: Minimum Tier-1 structural confirmation
-        # Need at least 2 of 5 core signals — prevents pure noise trades
-        # Loose enough to keep signal flow, tight enough to ensure real structure
-        if not _veto_reason:
-            _tier1 = sum([
-                bd.get('whale_wall', 0) >= 10,      # whale wall present
-                bd.get('funding', 0) >= 10,          # funding supports direction
-                bd.get('oi_spike', 0) >= 7,          # OI confirming
-                bd.get('vol_surge', 0) >= 8,         # volume elevated
-                bd.get('mtf', 0) >= 10,              # at least 2/3 TFs aligned
-            ])
-            if _tier1 < 2:
-                _veto_reason = f"Insufficient structural confirmation ({_tier1}/5 core signals) — need 2+"
+            # Veto 7: Minimum Tier-1 structural confirmation
+            if not _veto_reason:
+                _tier1 = sum([
+                    bd.get('whale_wall', 0) >= 10,
+                    bd.get('funding', 0) >= 10,
+                    bd.get('oi_spike', 0) >= 7,
+                    bd.get('vol_surge', 0) >= 8,
+                    bd.get('mtf', 0) >= 10,
+                ])
+                if _tier1 < 2:
+                    _veto_reason = f"Insufficient structural confirmation ({_tier1}/5 core signals) — need 2+"
 
-        # Veto 8: Score 100 quality gate — must have 3+ strong signals to earn 100
-        # Prevents "everything fired weakly" from looking like elite setup
-        # Signals still show as 97-99 if downgraded — not blocked
-        if not _veto_reason and raw_score >= 160:  # would show as 100
-            _tier1_100 = sum([
-                bd.get('whale_wall', 0) >= 15,       # strong whale wall
-                bd.get('funding', 0) >= 15,           # strong funding
-                bd.get('oi_spike', 0) >= 10,          # real OI confirmation
-                bd.get('vol_surge', 0) >= 14,         # significant volume
-                bd.get('mtf', 0) >= 20,               # all 3 TFs aligned
-                bd.get('sentiment', 0) >= 15,          # strong smart money signal
-                bd.get('orderflow', 0) >= 10,          # confirmed order flow
-                bd.get('stop_hunt', 0) >= 15,          # stop hunt zone
-            ])
-            if _tier1_100 < 3:
-                # Downgrade to max 99 — signal still shows, just not 100
-                raw_score = min(raw_score, 180)  # caps at display 99
-            elif _tier1_100 < 4:
-                raw_score = min(raw_score, 185)  # caps at display 99
+            # Veto 8: Score 100 quality gate
+            if not _veto_reason and raw_score >= 160:
+                _tier1_100 = sum([
+                    bd.get('whale_wall', 0) >= 15,
+                    bd.get('funding', 0) >= 15,
+                    bd.get('oi_spike', 0) >= 10,
+                    bd.get('vol_surge', 0) >= 14,
+                    bd.get('mtf', 0) >= 20,
+                    bd.get('sentiment', 0) >= 15,
+                    bd.get('orderflow', 0) >= 10,
+                    bd.get('stop_hunt', 0) >= 15,
+                ])
+                if _tier1_100 < 3:
+                    raw_score = min(raw_score, 180)
+                elif _tier1_100 < 4:
+                    raw_score = min(raw_score, 185)
 
-        # Veto 9: Same coin + same direction hit SL recently — prevent revenge trading
-        # Checks st.session_state for recent SL on this coin+direction
-        if not _veto_reason:
-            try:
-                _sl_cooldowns = st.session_state.get('sl_cooldowns', {})
-                _cool_key = f"{dsym}_{sig}"
-                _cool_ts = _sl_cooldowns.get(_cool_key, 0)
-                import time as _tc
-                if _tc.time() - _cool_ts < 14400:  # 4 hours in seconds
-                    _mins_left = int((14400 - (_tc.time() - _cool_ts)) / 60)
-                    _veto_reason = f"{dsym} {sig} hit SL recently — {_mins_left}min cooldown remaining"
-            except: pass
+            # Veto 9: SL cooldown — prevent revenge trading
+            if not _veto_reason:
+                try:
+                    _sl_cooldowns = st.session_state.get('sl_cooldowns', {})
+                    _cool_key = f"{dsym}_{sig}"
+                    _cool_ts = _sl_cooldowns.get(_cool_key, 0)
+                    import time as _tc
+                    if _tc.time() - _cool_ts < 14400:
+                        _mins_left = int((14400 - (_tc.time() - _cool_ts)) / 60)
+                        _veto_reason = f"{dsym} {sig} hit SL recently — {_mins_left}min cooldown remaining"
+                except: pass
 
         if _veto_reason:
             return None  # vetoed
@@ -4589,8 +4589,17 @@ if nav=="⚙️ Settings":
             ns_gl_preloser  = st.toggle("Pre-Loser Watch ⚠️",   S.get('gl_alert_preloser',  True))
             st.markdown('<div class="setting-help">Flat coin with declining volume on bounces and RSI crossing below 50 — watch for imminent drop.</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
-        # ── BACKTEST ──────────────────────────────────────────────────────
-        st.markdown('<div class="stg-card"><div class="stg-title">17. 📊 Backtest Defaults</div>',unsafe_allow_html=True)
+        # ── BACKTEST MODE ─────────────────────────────────────────────────
+        st.markdown('<div class="stg-card" style="border-color:#f59e0b;"><div class="stg-title" style="color:#d97706;">17. 🧪 Backtest Data Collection Mode</div>', unsafe_allow_html=True)
+        ns_backtest_mode = st.toggle("Enable Backtest Mode", S.get('backtest_mode', False), key='backtest_mode_toggle')
+        if ns_backtest_mode:
+            st.markdown('<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-family:monospace;font-size:.62rem;color:#92400e;">⚠️ BACKTEST MODE ON — All vetoes disabled. Every signal fires regardless of F&G, RSI limits, SL cooldown, or structural requirements. Use only for data collection — NOT for live trading.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="setting-help">When ON — disables all veto filters (F&G, RSI limits, SL cooldown, volume, structural). Lets every signal through so you can collect data and find which settings work best. Turn OFF for live trading.</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── BACKTEST DEFAULTS ─────────────────────────────────────────────
+        st.markdown('<div class="stg-card"><div class="stg-title">17b. 📊 Backtest Defaults</div>',unsafe_allow_html=True)
         bt1,bt2=st.columns(2)
         with bt1: ns_bt_min_sc=st.slider("Backtest min score",1,100,int(S.get('backtest_min_score',50)))
         with bt2: ns_bt_days=st.slider("Backtest days",7,90,int(S.get('backtest_days',30)))
@@ -4656,6 +4665,7 @@ if nav=="⚙️ Settings":
                 'social_enabled':ns_social_en,'social_reddit_weight':ns_social_wt,
                 'social_min_mentions':ns_social_min,'social_buzz_threshold':ns_social_buzz,'apify_token':ns_apify,
                 'backtest_min_score':ns_bt_min_sc,'backtest_days':ns_bt_days,
+                'backtest_mode':ns_backtest_mode,
                 'dst_enabled':ns_dst_enabled,'dst_dema_len':ns_dst_dema_len,
                 'dst_st_period':ns_dst_st_period,'dst_st_mult':ns_dst_st_mult,
                 'dst_use_vol':ns_dst_use_vol,'dst_vol_mult':ns_dst_vol_mult,'dst_use_rsi':ns_dst_use_rsi,
@@ -7285,6 +7295,17 @@ if _ks_on:
             _in_kill_zone = True
             _kill_zone_label = _kz.get('label', f'{_kzs:02d}:00–{_kze:02d}:00 UTC')
             break
+
+# ── Backtest Mode banner ───────────────────────────────────────────────────
+_backtest_mode_active = eff_s.get('backtest_mode', False)
+if _backtest_mode_active:
+    st.markdown(f'''<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:1.4rem;">🧪</span>
+      <div>
+        <div style="font-family:monospace;font-size:.75rem;font-weight:800;color:#d97706;">BACKTEST MODE ACTIVE — ALL VETOES DISABLED</div>
+        <div style="font-family:monospace;font-size:.6rem;color:#92400e;margin-top:2px;">F&G blocks OFF · RSI limits OFF · SL cooldown OFF · Volume gate OFF · Every signal fires — for data collection only</div>
+      </div>
+    </div>''', unsafe_allow_html=True)
 
 if _in_kill_zone and do_scan:
     do_scan = False  # block scanner from running
