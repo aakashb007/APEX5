@@ -2654,14 +2654,15 @@ class PrePumpScreener:
         except: return None
 
         sig="LONG" if float(df_slow['close'].iloc[-1])>e50 else "SHORT"
-        if s['btc_filter'] and btc_trend=="BEARISH" and sig=="LONG": return None
+        _bt_mode = s.get('backtest_mode', False)
+        if s['btc_filter'] and btc_trend=="BEARISH" and sig=="LONG" and not _bt_mode: return None
         qv_now=float(tick.get('quoteVolume',0) or 0)
-        if s.get('min_vol_filter',300000)>0 and qv_now<s['min_vol_filter']: return None
+        if not _bt_mode and s.get('min_vol_filter',300000)>0 and qv_now<s['min_vol_filter']: return None
         atr_pct=(atr/price*100) if price>0 else 0
         if atr_pct<s.get('atr_min_pct',0.2): return None
         if atr_pct>s.get('atr_max_pct',10.0): return None
         spread_max=s.get('spread_max_pct',0.5)
-        if spread_max>0:
+        if not _bt_mode and spread_max>0:
             bids_raw=ob.get('bids',[]); asks_raw=ob.get('asks',[])
             if bids_raw and asks_raw:
                 best_bid=float(bids_raw[0][0]); best_ask=float(asks_raw[0][0])
@@ -3325,8 +3326,8 @@ class PrePumpScreener:
 
         # ── ACCURACY GATES (existing) ─────────────────────────────────────
         active_cats=sum(1 for k,v in bd.items() if v>0 and k not in ('session','mtf'))
-        if active_cats<s.get('min_active_signals',3): return None
-        if len(reasons)<s.get('min_reasons',1): return None
+        if not _bt_mode and active_cats<s.get('min_active_signals',3): return None
+        if not _bt_mode and len(reasons)<s.get('min_reasons',1): return None
 
         # ── SCORE RESCALING — make 100 truly rare and meaningful ──────────
         # ── SCORE RESCALING ───────────────────────────────────────────────
@@ -3434,7 +3435,7 @@ class PrePumpScreener:
 
         try:
             rr=abs(tp-price)/abs(price-sl)
-            if rr<s.get('min_rr',1.5): return None
+            if not _bt_mode and rr<s.get('min_rr',1.5): return None
         except: pass
 
         result={
@@ -7302,8 +7303,8 @@ if _backtest_mode_active:
     st.markdown(f'''<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;">
       <span style="font-size:1.4rem;">🧪</span>
       <div>
-        <div style="font-family:monospace;font-size:.75rem;font-weight:800;color:#d97706;">BACKTEST MODE ACTIVE — ALL VETOES DISABLED</div>
-        <div style="font-family:monospace;font-size:.6rem;color:#92400e;margin-top:2px;">F&G blocks OFF · RSI limits OFF · SL cooldown OFF · Volume gate OFF · Every signal fires — for data collection only</div>
+        <div style="font-family:monospace;font-size:.75rem;font-weight:800;color:#d97706;">BACKTEST MODE ACTIVE — ALL FILTERS DISABLED</div>
+        <div style="font-family:monospace;font-size:.6rem;color:#92400e;margin-top:2px;">F&G vetoes OFF · RSI limits OFF · SL cooldown OFF · Volume filter OFF · Spread filter OFF · Min R:R OFF · Min reasons OFF · Every signal fires — data collection only</div>
       </div>
     </div>''', unsafe_allow_html=True)
 
