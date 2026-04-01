@@ -7133,7 +7133,7 @@ if nav == "📈 Inspector":
 
     # APEX + DEMA + Sentinel signals (from journal)
     _apex_total = len(_j_df) if not _j_df.empty else 0
-    _apex_wins  = len(_j_df[_j_df.get('status','') == 'WIN']) if not _j_df.empty and 'status' in _j_df.columns else 0
+    _apex_wins  = len(_j_df[_j_df['status'] == 'TP']) if not _j_df.empty and 'status' in _j_df.columns else 0
     _apex_wr    = round(_apex_wins / max(_apex_total, 1) * 100, 1)
 
     # G/L signals (from gl_performance)
@@ -7211,19 +7211,35 @@ if nav == "📈 Inspector":
             _cls_stats = []
             for _cls in _jd['class'].dropna().unique():
                 _cd = _jd[_jd['class'] == _cls]
-                _cw = len(_cd[_cd.get('status','') == 'WIN']) if 'status' in _cd.columns else 0
-                _cl = len(_cd[_cd.get('status','') == 'LOSS']) if 'status' in _cd.columns else 0
-                _cp = len(_cd) - _cw - _cl
+                # Journal uses 'TP' and 'SL' as status values (not 'WIN'/'LOSS')
+                _cw = len(_cd[_cd['status'] == 'TP']) if 'status' in _cd.columns else 0
+                _cl = len(_cd[_cd['status'] == 'SL']) if 'status' in _cd.columns else 0
+                _cp = len(_cd[_cd['status'] == 'ACTIVE']) if 'status' in _cd.columns else len(_cd)
                 _cwr = round(_cw / max(_cw+_cl, 1) * 100, 1)
-                _cls_stats.append({'Class': _cls, 'Total': len(_cd), 'Win': _cw,
-                                    'Loss': _cl, 'Pending': _cp, 'Win Rate': f"{_cwr}%"})
+                _cls_stats.append({'Class': _cls, 'Total': len(_cd), 'Win (TP)': _cw,
+                                    'Loss (SL)': _cl, 'Active': _cp, 'Win Rate': f"{_cwr}%"})
             if _cls_stats:
                 st.dataframe(pd.DataFrame(_cls_stats), use_container_width=True, hide_index=True)
 
         # Recent signals table
         st.markdown('<div style="font-family:monospace;font-size:.62rem;color:#64748b;margin-top:8px;margin-bottom:4px;">Recent logged signals:</div>', unsafe_allow_html=True)
-        _show_cols = [c for c in ['ts','symbol','type','pump_score','class','status','tp','sl'] if c in _jd.columns]
-        st.dataframe(_jd[_show_cols].tail(20).iloc[::-1], use_container_width=True, hide_index=True)
+        _show_cols = [c for c in ['ts','symbol','type','pump_score','class','status','tp','sl','tp1','tp2','tp3'] if c in _jd.columns]
+        _jd_disp = _jd[_show_cols].tail(20).iloc[::-1].copy()
+        # Compute win rate summary above table
+        _j_tp = len(_jd[_jd['status']=='TP']) if 'status' in _jd.columns else 0
+        _j_sl = len(_jd[_jd['status']=='SL']) if 'status' in _jd.columns else 0
+        _j_active = len(_jd[_jd['status']=='ACTIVE']) if 'status' in _jd.columns else 0
+        _j_wr = round(_j_tp / max(_j_tp+_j_sl,1)*100,1)
+        st.markdown(f'<div style="font-family:monospace;font-size:.65rem;color:#1e293b;padding:6px 0;">✅ TP Hits: <b>{_j_tp}</b> &nbsp;|&nbsp; 🛑 SL Hits: <b>{_j_sl}</b> &nbsp;|&nbsp; 🔄 Active: <b>{_j_active}</b> &nbsp;|&nbsp; 🎯 Win Rate: <b style="color:{"#059669" if _j_wr>=55 else "#dc2626"}">{_j_wr}%</b></div>', unsafe_allow_html=True)
+        st.dataframe(_jd_disp, use_container_width=True, hide_index=True,
+                     column_config={
+                         'tp': st.column_config.NumberColumn('TP', format="%.6f"),
+                         'sl': st.column_config.NumberColumn('SL', format="%.6f"),
+                         'tp1': st.column_config.NumberColumn('TP1(1R)', format="%.6f"),
+                         'tp2': st.column_config.NumberColumn('TP2(2R)', format="%.6f"),
+                         'tp3': st.column_config.NumberColumn('TP3(3R+)', format="%.6f"),
+                         'pump_score': st.column_config.NumberColumn('Score', format="%d"),
+                     })
 
     st.markdown("---")
 
