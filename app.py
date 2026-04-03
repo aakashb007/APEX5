@@ -5259,10 +5259,14 @@ if nav=="📊 Backtest":
             if df_ext_sub.empty:
                 st.warning("No signals match filters."); st.stop()
 
-            st.info(f"Backtesting {len(df_ext_sub)} signals from uploaded CSV...")
+            total_ext=len(df_ext_sub)
+            st.info(f"Backtesting {total_ext} signals concurrently — this takes 10–30 seconds regardless of count...")
             ext_results=[]; ext_prog=st.progress(0); ext_status=st.empty()
 
-            async def _ext_bt_fetch(sym, exch, ts_str, tp, sl, sig_type, max_candles):
+            # ── Build row lookup so we can re-attach CSV columns after gather ──
+            _ext_rows = list(df_ext_sub.iterrows())
+
+            async def _ext_bt_fetch_one(sym, exch, ts_str, tp, sl, sig_type, max_candles):
                 try:
                     from datetime import datetime as _dt
                     ts_dt=_dt.fromisoformat(str(ts_str)) if ts_str else None
@@ -5270,55 +5274,65 @@ if nav=="📊 Backtest":
                     ts_ms=int(ts_dt.timestamp()*1000)
                     tf=S.get('fast_tf','15m')
                     if exch=="OKX":
-                        ex=ccxt.okx({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                        ex=ccxt.okx({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                     elif exch=="GATE":
-                        ex=ccxt.gateio({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                        ex=ccxt.gateio({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                     else:
-                        ex=ccxt.mexc({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                        ex=ccxt.mexc({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                     await ex.load_markets()
                     raw=await ex.fetch_ohlcv(f"{sym}/USDT:USDT",tf,since=ts_ms,limit=max_candles)
                     await ex.close()
                     if not raw or len(raw)<3: return {'result':'ERROR','error':'no OHLCV data'}
                     df_r=pd.DataFrame(raw,columns=['ts','open','high','low','close','volume'])
-                    for idx,row in df_r.iterrows():
-                        h=float(row['high']); l=float(row['low'])
+                    for _,r in df_r.iterrows():
+                        h=float(r['high']); l=float(r['low'])
                         if sig_type=="LONG":
                             if h>=float(tp) and l<=float(sl):
-                                return {'result':'TP'} if float(row['open'])<=float(tp) else {'result':'SL'}
+                                return {'result':'TP'} if float(r['open'])<=float(tp) else {'result':'SL'}
                             if h>=float(tp): return {'result':'TP'}
                             if l<=float(sl): return {'result':'SL'}
                         else:
                             if l<=float(tp) and h>=float(sl):
-                                return {'result':'TP'} if float(row['open'])>=float(tp) else {'result':'SL'}
+                                return {'result':'TP'} if float(r['open'])>=float(tp) else {'result':'SL'}
                             if l<=float(tp): return {'result':'TP'}
                             if h>=float(sl): return {'result':'SL'}
                     return {'result':'OPEN'}
                 except Exception as e:
                     return {'result':'ERROR','error':str(e)[:60]}
 
-            total_ext=len(df_ext_sub)
-            for i,(idx,row) in enumerate(df_ext_sub.iterrows()):
-                ext_status.text(f"Backtesting {i+1}/{total_ext}: {row.get('symbol','?')} {row.get('type','')}...")
-                try:
-                    r=asyncio.run(_ext_bt_fetch(
-                        str(row.get('symbol','')),
-                        str(row.get('exchange','OKX')),
-                        row.get('ts'),
-                        row.get('tp',0),
-                        row.get('sl',0),
-                        row.get('type','LONG'),
-                        ext_candles))
-                    if r:
+            async def _ext_bt_run_all(rows, max_candles, batch_size=25):
+                """Run all signals in batches of batch_size concurrently to avoid rate limits."""
+                all_results = []
+                total = len(rows)
+                for batch_start in range(0, total, batch_size):
+                    batch = rows[batch_start:batch_start+batch_size]
+                    tasks = []
+                    for (_, row) in batch:
+                        tasks.append(_ext_bt_fetch_one(
+                            str(row.get('symbol','')),
+                            str(row.get('exchange','GATE')).upper(),
+                            row.get('ts'),
+                            row.get('tp',0), row.get('sl',0),
+                            str(row.get('type','LONG')).upper(),
+                            max_candles
+                        ))
+                    batch_res = await asyncio.gather(*tasks, return_exceptions=True)
+                    for i, res in enumerate(batch_res):
+                        row = batch[i][1]
+                        if isinstance(res, Exception):
+                            res = {'result':'ERROR','error':str(res)[:60]}
+                        elif not isinstance(res, dict):
+                            res = {'result':'ERROR','error':'unknown'}
                         for col in df_ext_sub.columns:
-                            r[col]=row.get(col,'')
-                        ext_results.append(r)
-                except Exception as e:
-                    err_row={'result':'ERROR','error':str(e)[:50]}
-                    for col in df_ext_sub.columns:
-                        err_row[col]=row.get(col,'')
-                    ext_results.append(err_row)
-                ext_prog.progress((i+1)/total_ext)
+                            res[col] = row.get(col,'')
+                        all_results.append(res)
+                    done = min(batch_start+batch_size, total)
+                    ext_prog.progress(done/total)
+                    ext_status.text(f"✅ Processed {done}/{total} signals...")
+                    await asyncio.sleep(0.3)  # brief pause between batches
+                return all_results
 
+            ext_results = asyncio.run(_ext_bt_run_all(_ext_rows, ext_candles, batch_size=25))
             ext_status.empty(); ext_prog.empty()
             if not ext_results:
                 st.warning("No results."); st.stop()
@@ -5442,7 +5456,7 @@ if nav=="📊 Backtest":
         if df_sub.empty:
             st.warning("No signals match filters."); st.stop()
 
-        st.info(f"Backtesting {len(df_sub)} signals — scanning candle HIGH/LOW for each...")
+        st.info(f"Backtesting {len(df_sub)} signals concurrently — this takes 10–30 seconds regardless of count...")
         results_bt=[]; prog=st.progress(0); status_ph=st.empty()
 
         async def _bt_fetch(sym, exch, ts_str, tp, sl, sig_type, entry_price, max_candles):
@@ -5453,20 +5467,18 @@ if nav=="📊 Backtest":
                 ts_ms=int(ts_dt.timestamp()*1000)
                 tf=S.get('fast_tf','15m')
                 if exch=="OKX":
-                    ex=ccxt.okx({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                    ex=ccxt.okx({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                 elif exch=="GATE":
-                    ex=ccxt.gateio({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                    ex=ccxt.gateio({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                 else:
-                    ex=ccxt.mexc({'enableRateLimit':True,'rateLimit':100,'timeout':8000,'options':{'defaultType':'swap'}})
+                    ex=ccxt.mexc({'enableRateLimit':True,'rateLimit':200,'timeout':10000,'options':{'defaultType':'swap'}})
                 await ex.load_markets()
                 sym_ccxt=f"{sym}/USDT:USDT"
                 raw=await ex.fetch_ohlcv(sym_ccxt,tf,since=ts_ms,limit=max_candles)
                 await ex.close()
                 if not raw or len(raw)<3: return None
                 df_r=pd.DataFrame(raw,columns=['ts','open','high','low','close','volume'])
-
-                # Scan every candle HIGH and LOW — never miss an intracandle hit
-                for idx,row in df_r.iterrows():
+                for _,row in df_r.iterrows():
                     h=float(row['high']); l=float(row['low'])
                     if sig_type=="LONG":
                         if h>=float(tp) and l<=float(sl):
@@ -5484,26 +5496,37 @@ if nav=="📊 Backtest":
             except Exception as e:
                 return {'result':'ERROR','error':str(e)[:60]}
 
-        total=len(df_sub)
-        for i,(idx,row) in enumerate(df_sub.iterrows()):
-            status_ph.text(f"Backtesting {i+1}/{total}: {row.get('symbol','?')} {row.get('type','')} score:{row.get('pump_score',0)}...")
-            try:
-                r=asyncio.run(_bt_fetch(
-                    str(row.get('symbol','')),str(row.get('exchange','OKX')),
-                    row.get('ts'),row.get('tp',0),row.get('sl',0),
-                    row.get('type','LONG'),row.get('price',0),bt_candles))
-                if r:
-                    # Copy ALL journal columns into result row
+        async def _bt_run_all(rows, max_candles, batch_size=25):
+            """Run all signals in concurrent batches to avoid rate limits and timeouts."""
+            all_results = []
+            total = len(rows)
+            for batch_start in range(0, total, batch_size):
+                batch = rows[batch_start:batch_start+batch_size]
+                tasks = [
+                    _bt_fetch(
+                        str(r.get('symbol','')), str(r.get('exchange','GATE')).upper(),
+                        r.get('ts'), r.get('tp',0), r.get('sl',0),
+                        str(r.get('type','LONG')).upper(), r.get('price',0), max_candles
+                    ) for _, r in batch
+                ]
+                batch_res = await asyncio.gather(*tasks, return_exceptions=True)
+                for i, res in enumerate(batch_res):
+                    row = batch[i][1]
+                    if isinstance(res, Exception) or res is None:
+                        res = {'result':'ERROR','error':str(res)[:60] if res else 'no data'}
+                    elif not isinstance(res, dict):
+                        res = {'result':'ERROR','error':'unknown'}
                     for col in df_sub.columns:
-                        r[col]=row.get(col,'')
-                    results_bt.append(r)
-            except Exception as e:
-                err_row={'result':'ERROR','error':str(e)[:50]}
-                for col in df_sub.columns:
-                    err_row[col]=row.get(col,'')
-                results_bt.append(err_row)
-            prog.progress((i+1)/total)
+                        res[col] = row.get(col,'')
+                    all_results.append(res)
+                done = min(batch_start+batch_size, total)
+                prog.progress(done/total)
+                status_ph.text(f"✅ Processed {done}/{total} signals...")
+                await asyncio.sleep(0.3)
+            return all_results
 
+        _bt_rows = list(df_sub.iterrows())
+        results_bt = asyncio.run(_bt_run_all(_bt_rows, bt_candles, batch_size=25))
         status_ph.empty(); prog.empty()
         if not results_bt:
             st.warning("No backtest results."); st.stop()
@@ -6998,6 +7021,11 @@ if nav == "📈 Inspector":
                 st.error(f"❌ {_ue}")
 
     st.markdown("---")
+
+    # ── Migrate old CSV: add any missing columns so the page never crashes ──
+    for _mc in INSPECTOR_COLS:
+        if _mc not in _idf.columns:
+            _idf[_mc] = ''
 
     if _idf.empty or len(_idf) == 0:
         st.markdown('<div class="empty-st">📈 No signals tracked yet.<br><br>The Inspector automatically logs signals as each scanner runs. Just use the app normally — every APEX, DEMA, G/L and Sentinel signal will be tracked here.<br><br>Come back after a few days to see profitability stats.</div>', unsafe_allow_html=True)
